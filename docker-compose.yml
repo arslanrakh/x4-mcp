@@ -1,0 +1,31 @@
+# docker compose up -d
+#
+# Copy .env.example to .env first and point X4_DIR at your X4 installation:
+# the server reads the game's archives to build its ship catalogue and API
+# index, so it needs to see them. The mount is read-only.
+#
+# Both ports are published on the loopback interface only. 8765 is where the
+# game dials in, 8766 is where your agent connects.
+
+services:
+  x4mcp:
+    build: .
+    image: x4mcp:latest
+    container_name: x4mcp
+    restart: unless-stopped
+
+    volumes:
+      - "${X4_DIR:?set X4_DIR in .env to your X4 folder}:/game:ro"
+
+    # Overrides anything in .env: inside the container these are fixed, and
+    # only the host-side mapping below is configurable.
+    environment:
+      X4_DIR: /game
+      X4MCP_HTTP_HOST: 0.0.0.0
+      X4MCP_HTTP_PORT: 8766
+      X4MCP_GAME_PORT: 8765
+      X4MCP_LANGUAGE: ${X4MCP_LANGUAGE:-en}
+
+    ports:
+      - "127.0.0.1:${X4MCP_GAME_PORT:-8765}:8765"
+      - "127.0.0.1:${X4MCP_HTTP_PORT:-8766}:8766"

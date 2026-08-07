@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<addon name="x4mcp" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../ui/core/addon.xsd">
+  <environment type="menus">
+    <!-- Order matters: the transport uses X4MCP_Json while loading, and the
+         state collector registers its ops into the X4MCP table. -->
+    <file name="ui/x4mcp_json.lua" />
+    <file name="ui/x4mcp_transport.lua" />
+    <file name="ui/x4mcp_state.lua" />
+  </environment>
+</addon>

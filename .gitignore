@@ -1,0 +1,22 @@
+# Rebuilt from the player's own X4 installation on every server start.
+# Committing it would ship one machine's game version, DLC and mod set to
+# everybody else.
+server/generated/
+
+# Local configuration.
+.env
+
+# Development scratch.
+snapshots/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# The prebuilt DLL in dist/ IS committed on purpose: it imports lua51_64.dll by
+# name rather than binding to one copy, so a single build works with every X4
+# install and users do not need a C toolchain.

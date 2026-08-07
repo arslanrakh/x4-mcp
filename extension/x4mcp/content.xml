@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<content id="x4mcp"
+         name="X4 MCP Bridge"
+         author="arslan"
+         version="100"
+         date="2026-08-07"
+         save="false"
+         enabled="1">
+  <text language="" description="File-based bridge between X4 and an external MCP server. Milestone 0 spike."/>
+</content>
