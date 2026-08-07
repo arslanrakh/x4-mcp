@@ -148,7 +148,7 @@ def prepare_artifacts(game_dir: str | None, language: str) -> dict:
 
 def build_server(game_port: int, artifacts: dict | None = None) -> MCPServer:
     bridge = GameBridge(port=game_port)
-    x4 = X4(bridge)
+    x4 = X4(bridge, game_dir=(artifacts or {}).get("game_dir"))
     session = CodeSession(x4)
     artifacts = artifacts or {}
 

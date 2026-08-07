@@ -275,6 +275,105 @@ def build_api_index(game: Path) -> dict:
 
 # -------------------------------------------------------------- orchestration
 
+SOURCE_RE = re.compile(r"^(ui/.+\.(lua|xpl)|md/.+\.xml|aiscripts/.+\.xml|libraries/.+\.xml)$")
+
+
+def iter_source(game: Path):
+    """Yield (archive_relative_path, text) for the game's own scripts.
+
+    The game ships its entire UI in readable Lua and its AI in readable XML.
+    That is the authoritative answer to "how does X4 itself do this", and it
+    beats guessing at an API from signatures alone -- the AssignCommander
+    sequence, for instance, is only obvious once you have read the menu code
+    that performs it.
+    """
+    for cat in archives(game):
+        dat = cat.with_suffix(".dat")
+        for inner, offset, size in cat_entries(cat):
+            if not SOURCE_RE.match(inner) or size > 4_000_000:
+                continue
+            yield inner, _read(dat, offset, size).decode("utf-8", "replace")
+
+
+def search_source(game: Path, pattern: str, limit: int = 40, context: int = 2,
+                  path_filter: str | None = None) -> list[dict]:
+    """Grep the game's own scripts. Returns matches with surrounding lines."""
+    rx = re.compile(pattern, re.I)
+    path_rx = re.compile(path_filter, re.I) if path_filter else None
+    hits: list[dict] = []
+
+    for inner, text in iter_source(game):
+        if path_rx and not path_rx.search(inner):
+            continue
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
+            if rx.search(line):
+                lo, hi = max(0, i - context), min(len(lines), i + context + 1)
+                hits.append({
+                    "file": inner,
+                    "line": i + 1,
+                    "text": "\n".join(lines[lo:hi]),
+                })
+                if len(hits) >= limit:
+                    return hits
+    return hits
+
+
+def read_source(game: Path, path: str, start: int = 1, end: int | None = None) -> str:
+    """Read one of the game's own script files, optionally a line range."""
+    for inner, text in iter_source(game):
+        if inner == path or inner.endswith("/" + path.lstrip("/")):
+            lines = text.splitlines()
+            stop = len(lines) if end is None else min(len(lines), end)
+            body = lines[max(0, start - 1):stop]
+            return "\n".join(f"{start + n:6d}  {line}" for n, line in enumerate(body))
+    raise FileNotFoundError(f"no such file in the game archives: {path}")
+
+
+ORDER_FILE_RE = re.compile(r"^aiscripts/order\..+\.xml$")
+
+
+def build_order_params(game: Path) -> dict:
+    """Parameter lists for every order, read from the game's own definitions.
+
+    X4 declares each order in aiscripts/order.*.xml with named, typed and
+    commented parameters. SetOrderParam is positional, so knowing the order of
+    these declarations is the difference between an order that works and one
+    that is created successfully and does nothing. Generated rather than
+    hard-coded, so mod orders are described exactly like stock ones.
+    """
+    out: dict[str, dict] = {}
+    for cat in archives(game):
+        dat = cat.with_suffix(".dat")
+        for inner, offset, size in cat_entries(cat):
+            if not ORDER_FILE_RE.match(inner):
+                continue
+            try:
+                root = ET.fromstring(_read(dat, offset, size))
+            except ET.ParseError:
+                continue
+            orders = [root] if root.tag == "order" else list(root.iter("order"))
+            for order in orders:
+                oid = order.get("id")
+                if not oid:
+                    continue
+                params = []
+                for i, p in enumerate(order.findall("./params/param"), start=1):
+                    params.append({
+                        "index": i,          # what SetOrderParam expects
+                        "name": p.get("name"),
+                        "type": p.get("type"),
+                        "default": p.get("default"),
+                        "comment": p.get("comment"),
+                    })
+                out[oid] = {
+                    "category": order.get("category"),
+                    "file": inner,
+                    "params": params,
+                }
+    return out
+
+
 def ensure_artifacts(game: Path, cache_dir: Path, language: str = "en") -> dict:
     """Rebuild both artefacts from the installed game. Cheap enough to redo on
     every start, which removes any chance of them going stale."""
@@ -288,12 +387,17 @@ def ensure_artifacts(game: Path, cache_dir: Path, language: str = "en") -> dict:
     (cache_dir / "api_index.json").write_text(
         json.dumps(index, indent=1, ensure_ascii=False, sort_keys=True))
 
+    orders = build_order_params(game)
+    (cache_dir / "order_params.json").write_text(
+        json.dumps(orders, indent=1, ensure_ascii=False, sort_keys=True))
+
     return {
         "game_dir": str(game),
         "archives": len(archives(game)),
         "catalog_ships": len(catalog),
         "api_functions": len(index["functions"]),
         "api_structs": len(index["structs"]),
+        "orders_described": len(orders),
         "language": language,
     }
 

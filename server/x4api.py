@@ -112,27 +112,36 @@ LOOKUPS
     x4.free_ships()                ships with commander is None
     x4.fleet_of(ship)              its subordinates as Ship objects
 
-CHANGING FLEETS
-    x4.set_commander(ship, commander, assignment="attack", group=1)
-    x4.set_commander(ship, None)          # release from its fleet
+ANY ORDER, INCLUDING THE ONES NOBODY WRAPPED
+    There is no per-feature method to wait for. Every order in the game is
+    driven the same way, and the parameters come from the game's own
+    definition rather than from anyone's memory:
 
-    Use this, never a hand-built AssignCommander order. The game needs seven
-    parameters and the order pushed to the front of the queue; a partial one
-    reports success and changes nothing, which is what makes fleet edits look
-    like they worked when they did not.
+        x4.order_params("AssignCommander")
+        -> 1 commander (object)     2 assignment (internal)
+           3 subordinategroup       4 setgroupassignment (bool)
+           5 cancelorders (bool)    6 response
+           7 getnewdefaultorder     8 informfleetmanager   9 debugchance
 
-    assignment: "attack" "interception" "defence" "trade" "mining"
-                "supplyfleet" "salvage" "police"
+        x4.order(ship, "AssignCommander", {
+            "commander": {"id": flagship.id},
+            "assignment": "interception",
+            "subordinategroup": 1,
+            "setgroupassignment": True,
+        })
 
-    Two things that are easy to get backwards:
-      - The precondition check is on the SUBORDINATE, not the commander.
-        can_order(commander, "AssignCommander") answers a different question
-        and tells you nothing about whether the pairing is allowed.
-      - A ship with no pilot cannot be assigned at all. set_commander says so
-        explicitly instead of failing quietly.
+    Passing a name that is not in the definition raises rather than being
+    silently dropped. Omitted parameters keep the game's own defaults.
 
-    Always re-read the ship afterwards. The order is queued, not instant, and
-    an existing order queue on the ship can delay or block it.
+    Fleet edits specifically: the precondition check goes on the SUBORDINATE,
+    not the commander -- can_order(commander, "AssignCommander") answers a
+    different question. A ship with no pilot cannot be assigned at all.
+    Assignments are "attack", "interception", "defence", "trade", "mining",
+    "supplyfleet", "salvage", "police"; read them off a live fleet with
+    C.GetSubordinateGroupAssignment(commander_id, group).
+
+    Always re-read the ship afterwards: orders are queued, not instant, and an
+    existing queue can delay or block one.
 
 FLEETS
     A fleet is a commander and its subordinates, and it nests: a ship can lead
@@ -164,22 +173,34 @@ THE WIDER UNIVERSE
 
     `sector` accepts a Sector, any Ship/Station (its sector is used), or a macro.
 
-FULL GAME API
-    Everything the game itself can do is reachable. Its ffi.cdef declarations
-    are global to the Lua state, so ~2000 C functions resolve through `C`
-    without being redeclared. Discover them:
+FULL GAME API -- THERE IS NO WRAPPER YOU NEED TO WAIT FOR
+    Everything the game itself can do is already reachable. X4's ffi.cdef
+    declarations are global to the Lua state, so ~2000 C functions resolve
+    through `C` without being redeclared, and the engine's Lua globals are in
+    scope too. If this API has no method for what you want, that is not a
+    limitation -- write the Lua yourself.
 
-        x4.api("Order")        signatures matching a pattern
-        x4.api("Subordinate")
+        x4.api("Order")        C signatures matching a pattern
         x4.structs("Order")    struct names for ffi.new
         x4.globals("Convert")  engine Lua globals (not FFI)
+        x4.eval_lua(code)      run it
 
-    then call them:
+    WHEN A SIGNATURE IS NOT ENOUGH, READ THE GAME'S OWN CODE
+    X4 ships its entire UI as readable Lua and its AI as readable XML. That is
+    the authoritative recipe for any action, and it is searchable from here:
 
-        x4.eval_lua('return C.IsOrderSelectableFor("DockAt", ' + f"{ship.id}ULL)")
+        x4.source("AssignCommander")          where and how the game does it
+        x4.source("SetOrderParam", path="interactmenu")
+        x4.read("ui/addons/ego_interactmenu/menu_interactmenu.lua", 540, 580)
 
-    Order ids come from the registry, mods included:
-        x4.eval_lua('local ffi=require("ffi") ... GetOrderDefinitions ...')
+    Do this before concluding that something is impossible. Most "the game
+    does not allow it" conclusions are really "the call needs parameters the
+    signature does not show". Assigning a commander looks like one CreateOrder
+    call and is in fact seven positional parameters plus a queue reorder --
+    obvious only once you have read the menu code.
+
+    When you work out a recipe this way, write it into API_REFERENCE in
+    server/x4api.py so the next session starts from it. See AGENTS.md.
 
 GIVING ORDERS -- THIS IS SUPPORTED, USE IT
     x4.orders()                    the order registry from the game, mods included
@@ -209,10 +230,11 @@ OUTPUT
 class X4:
     """Facade the generated code sees. Deliberately small and stable."""
 
-    def __init__(self, bridge: GameBridge):
+    def __init__(self, bridge: GameBridge, game_dir: str | None = None):
         self._bridge = bridge
         self._world = World()
         self._refreshed_at: float | None = None
+        self._game_dir = game_dir
 
     # ------------------------------------------------------------- refresh
 
@@ -343,55 +365,91 @@ class X4:
         data = self._bridge.call("order_definitions", {}, timeout=60.0)
         return data.get("orders") or []
 
+    def order_params(self, order_id: str) -> dict:
+        """What an order takes, read from the game's own definition.
+
+        SetOrderParam is positional, so `index` here is the number to pass.
+        This is generated from aiscripts/order.*.xml, so mod orders are
+        described exactly like stock ones.
+
+            x4.order_params("AssignCommander")
+            -> {"category": "navigation", "params": [
+                 {"index": 1, "name": "commander", "type": "object",
+                  "comment": "New commander. No commander means remove ..."},
+                 ...]}
+        """
+        import json
+        from pathlib import Path
+        path = Path(__file__).resolve().parent / "generated" / "order_params.json"
+        try:
+            table = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return table.get(order_id, {})
+
     def can_order(self, ship, order: str) -> bool:
         ship_id = getattr(ship, "id", ship)
         data = self._bridge.call("can_order", {"ship": str(ship_id), "order": order})
         return bool(data.get("can_order"))
 
-    def order(self, ship, order: str, params: list | None = None,
+    def _positional(self, order_id: str, params) -> list:
+        """Turn named parameters into the positional list SetOrderParam wants.
+
+        Names come from the game's own order definition, so this works for
+        every order including ones added by mods, and nothing about any
+        particular order is encoded here.
+        """
+        if params is None:
+            return []
+        if isinstance(params, (list, tuple)):
+            return list(params)
+
+        spec = self.order_params(order_id).get("params") or []
+        if not spec:
+            raise RuntimeError(
+                f"no parameter definition found for {order_id}; pass a "
+                f"positional list, or read it with x4.source({order_id!r})")
+
+        index_of = {p["name"]: p["index"] for p in spec}
+        unknown = [k for k in params if k not in index_of]
+        if unknown:
+            raise RuntimeError(
+                f"{order_id} has no parameter(s) {unknown}. Known: "
+                f"{[p['name'] for p in spec]}")
+
+        # "__nil__" is the wire form of nil: skipped parameters must stay unset
+        # rather than become false or zero.
+        out = ["__nil__"] * max(index_of[k] for k in params)
+        for name, value in params.items():
+            out[index_of[name] - 1] = value
+        return out
+
+    def order(self, ship, order: str, params=None,
               first: bool = True, enable: bool = True, force: bool = False) -> dict:
         """Give a ship an order. This changes the player's game.
 
-        `params` are positional, exactly as the game expects them. Object
-        parameters must be tagged so they arrive as engine ids rather than
-        numbers: {"id": station.id}.
+        `params` may be a dict of names, resolved through the game's own order
+        definition, or a positional list. Object arguments must be tagged so
+        they arrive as engine ids rather than numbers: {"id": station.id}.
 
-            x4.order(katana, "DockAndWait", [{"id": station.id}])
+            x4.order(katana, "DockAndWait", {"destination": {"id": yard.id}})
+            x4.order(ship, "AssignCommander", {
+                "commander": {"id": flagship.id},
+                "assignment": "interception",
+                "subordinategroup": 1,
+                "setgroupassignment": True,
+            })
         """
         ship_id = getattr(ship, "id", ship)
         args = {
             "ship": str(ship_id),
             "order": order,
-            "params": params or [],
+            "params": self._positional(order, params),
             "first": first,
             "enable": enable,
             "force": force,
         }
         data = self._bridge.call("create_order", args, timeout=60.0)
-        if not data.get("ok"):
-            raise RuntimeError(f"{data.get('err')}: {data.get('detail')}")
-        return data
-
-    def set_commander(self, ship, commander=None, assignment: str = "attack",
-                      group: int = 1, inform: bool = True) -> dict:
-        """Put a ship under a commander, or release it with commander=None.
-
-        Use this rather than assembling an AssignCommander order by hand: the
-        game needs seven parameters and the order moved to the front of the
-        queue, and a partial one succeeds while changing nothing.
-
-        assignment: "attack", "interception", "defence", "trade", "mining",
-                    "supplyfleet", "salvage", "police"
-        """
-        ship_id = getattr(ship, "id", ship)
-        commander_id = getattr(commander, "id", commander)
-        data = self._bridge.call("set_commander", {
-            "ship": str(ship_id),
-            "commander": str(commander_id) if commander_id else "",
-            "assignment": assignment,
-            "group": group,
-            "inform": inform,
-        }, timeout=60.0)
         if not data.get("ok"):
             raise RuntimeError(f"{data.get('err')}: {data.get('detail')}")
         return data
@@ -413,6 +471,29 @@ class X4:
         if len(hits) > limit:
             hits = hits[:limit] + [f"... {len(hits) - limit} more; narrow the pattern"]
         return hits
+
+    def source(self, pattern: str, limit: int = 12, context: int = 3,
+               path: str | None = None) -> list[dict]:
+        """Search the game's OWN scripts for how X4 does something.
+
+        This is the answer to "the API has no wrapper for what I need". X4
+        ships its entire UI as readable Lua and its AI as readable XML, so the
+        authoritative recipe for any action is in there. Signatures alone are
+        rarely enough -- assigning a commander, for example, turns out to need
+        seven positional parameters and a queue reorder, which no signature
+        tells you.
+
+            x4.source("AssignCommander")
+            x4.source("SetOrderParam", path="interactmenu")
+        """
+        from gamefiles import find_game_dir, search_source
+        return search_source(find_game_dir(self._game_dir), pattern,
+                             limit=limit, context=context, path_filter=path)
+
+    def read(self, path: str, start: int = 1, end: int | None = None) -> str:
+        """Read one of the game's own script files, with line numbers."""
+        from gamefiles import find_game_dir, read_source
+        return read_source(find_game_dir(self._game_dir), path, start, end)
 
     def structs(self, pattern: str = "") -> list[str]:
         import re
