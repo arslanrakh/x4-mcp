@@ -104,20 +104,26 @@ your install is somewhere unusual. You can also copy `extension/x4mcp` plus
 
 ### 2. The server
 
-**With Docker**
-
 ```bash
-cp .env.example .env
-# set X4_DIR in .env -- the container cannot autodetect a path on your host
-docker compose up -d
-```
-
-**Without Docker**
-
-```bash
+cp .env.example .env             # X4_DIR only needed if autodetection fails
 ./scripts/run-server.sh          # macOS/Linux, creates a venv on first run
 .\scripts\run-server.ps1         # Windows
 ```
+
+**With Docker** — set `X4_DIR` in `.env` first, since the container cannot
+autodetect a path on your host:
+
+```bash
+docker compose up -d
+```
+
+> **Docker caveat.** The game connects *into* the server, so it has to reach the
+> container's published port. On macOS with X4 under CrossOver and OrbStack
+> publishing the port, it does not: the game retries forever while the same
+> server run directly on the host is reached immediately. If `x4_status` reports
+> `connected: false` while X4 is running and ticking, this is why — run the
+> server directly instead. Docker is fine on Linux, where published ports live
+> on the host's own network stack.
 
 On start the server locates X4, reads its archives and regenerates a ship
 catalogue and an API index into `server/generated/`. That takes under a second

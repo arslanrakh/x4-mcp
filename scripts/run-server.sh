@@ -10,11 +10,28 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 VENV="$ROOT/.venv"
 
+# Parsed rather than sourced. Sourcing runs the file as shell, so an unquoted
+# value with spaces -- which every real X4_DIR has, "C:/Program Files/..." or
+# "~/Library/Application Support/..." -- is split into words and executed.
 if [ -f "$ROOT/.env" ]; then
-  set -a
-  # shellcheck disable=SC1091
-  . "$ROOT/.env"
-  set +a
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ''|'#'*) continue ;;
+      *=*) ;;
+      *) continue ;;
+    esac
+    key=${line%%=*}
+    value=${line#*=}
+    case "$key" in
+      [A-Za-z_]*) ;;
+      *) continue ;;
+    esac
+    case "$value" in
+      \"*\") value=${value#\"}; value=${value%\"} ;;
+      \'*\') value=${value#\'}; value=${value%\'} ;;
+    esac
+    export "$key=$value"
+  done < "$ROOT/.env"
 fi
 
 if [ ! -x "$VENV/bin/python" ]; then

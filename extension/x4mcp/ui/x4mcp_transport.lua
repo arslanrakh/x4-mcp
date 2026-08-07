@@ -59,6 +59,7 @@ local M = {
 	-- mistakes a normal start for a dropped connection and lies to the log.
 	last_state  = "disconnected",
 	connects    = 0,
+	last_open_error = nil,
 	msgs_in     = 0,
 	msgs_out    = 0,
 	ops         = {},
@@ -287,7 +288,20 @@ local function tick_inner()
 		set_state("disconnected")
 		if t - M.last_try >= RECONNECT_INTERVAL then
 			M.last_try = t
-			M.native.open(HOST, PORT)
+			-- Report a refused connect, but only when the reason changes.
+			-- This used to be discarded entirely, which meant a bridge that
+			-- never came up looked exactly like one that was simply idle --
+			-- no socket, no message, nothing to go on.
+			local ok, err = M.native.open(HOST, PORT)
+			if not ok then
+				local text = tostring(err)
+				if text ~= M.last_open_error then
+					M.last_open_error = text
+					log("cannot reach %s:%d -- %s", HOST, PORT, text)
+				end
+			else
+				M.last_open_error = nil
+			end
 			set_state(M.native.state())
 		end
 		return

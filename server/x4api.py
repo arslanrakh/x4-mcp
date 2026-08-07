@@ -294,8 +294,13 @@ class X4:
         """
         macro = None
         if sector is not None:
-            macro = getattr(sector, "macro", None) or \
-                    getattr(sector, "sector_macro", None) or str(sector)
+            # Order matters: a Ship and a Station carry BOTH `macro` (their own
+            # hull) and `sector_macro`. Reading `macro` first quietly filtered
+            # by the ship's model instead of its location and always matched
+            # nothing.
+            macro = getattr(sector, "sector_macro", None) \
+                or getattr(sector, "macro", None) \
+                or str(sector)
         args = {
             "sector_macro": macro,
             "kinds": list(kinds) if kinds else None,

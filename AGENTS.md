@@ -185,6 +185,19 @@ If the bridge is connected but the game is not, check this first — the symptom
 is a live game process with **no network file descriptors at all**
 (`lsof -a -p <pid> -i` returns nothing).
 
+**A container's published port may be unreachable from the game.** The game
+dials *into* the server, so with the server in Docker it has to reach the
+published port. Measured on macOS with X4 under CrossOver and OrbStack: it never
+connects, while the identical server run on the host is reached within seconds.
+The tick was verified alive during the test (the game logged `connection lost`
+when the host server went away), so this is not the background-stall problem.
+Run the server directly on such setups.
+
+**`Ship` and `Station` have both `macro` and `sector_macro`.** `macro` is their
+own hull; `sector_macro` is where they are. Anything that means "the sector of
+this object" must read `sector_macro` first — reading `macro` filtered stations
+by the ship's model and matched nothing, while looking perfectly reasonable.
+
 **IDs arrive in two shapes.** Enumerators return 64-bit cdata, printed by LuaJIT
 as `1234ULL`. `GetComponentData` returns engine Lua ids, printed as `ID: 1234`.
 `norm()` in `x4mcp_state.lua` reduces both to the same digit string. If that
