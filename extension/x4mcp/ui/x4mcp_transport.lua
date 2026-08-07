@@ -20,8 +20,23 @@
       host -> game   {"t":"req","seq":N,"op":"...","args":{...}}
 ]]
 
-local DLL_PATH = ".\\extensions\\x4mcp\\x4mcp_64.dll"
-local ENTRY    = "luaopen_x4mcp"
+-- Where to look for the native library, in order.
+--
+-- This list exists because the game's working directory is NOT the game folder
+-- when X4 is started the normal way -- through Steam, GOG or a desktop
+-- shortcut, cwd is "/" (or C:\). Any relative path then resolves against the
+-- wrong place and the bridge silently never connects.
+--
+-- A bare filename is different: the OS loader searches the executable's own
+-- directory first, whatever the working directory is. So the copy next to
+-- X4.exe is the one that always works, and the relative paths are kept as a
+-- fallback for setups where only the extension folder has it.
+local DLL_CANDIDATES = {
+	"x4mcp_64.dll",
+	".\\extensions\\x4mcp\\x4mcp_64.dll",
+	"extensions\\x4mcp\\x4mcp_64.dll",
+}
+local ENTRY = "luaopen_x4mcp"
 
 -- Defaults; overridden at load time from the environment if the variables are
 -- set, since the Lua sandbox has no os.getenv and hard-coding a port into a
@@ -192,10 +207,22 @@ local function ensure_native()
 		return false
 	end
 
-	local loader, err = package.loadlib(DLL_PATH, ENTRY)
+	local loader, tried = nil, {}
+	for _, path in ipairs(DLL_CANDIDATES) do
+		local candidate, err = package.loadlib(path, ENTRY)
+		if candidate ~= nil then
+			loader = candidate
+			log("loaded native library from %s", path)
+			break
+		end
+		tried[#tried + 1] = path .. " (" .. tostring(err) .. ")"
+	end
+
 	if loader == nil then
-		M.load_error = tostring(err)
-		log("ABORT: package.loadlib(%s) -> %s", DLL_PATH, M.load_error)
+		M.load_error = "no candidate path worked: " .. table.concat(tried, "; ")
+		log("ABORT: %s", M.load_error)
+		log("       Copy x4mcp_64.dll next to X4.exe -- the game's working "
+			.. "directory is not its install folder when launched normally.")
 		return false
 	end
 

@@ -169,6 +169,22 @@ End-to-end check against a live game:
 
 These cost real debugging. Do not rediscover them.
 
+**The game's working directory is not its install folder.** Started the normal
+way — Steam, GOG, a desktop shortcut — X4's cwd is `/` (or `C:\`). Any relative
+path passed to `package.loadlib` resolves against the wrong place, the DLL never
+loads, and the bridge silently never connects: no error the player can see, no
+socket, nothing. This was invisible during early development because the game
+was being launched with an explicit `--workdir`.
+
+The installer therefore puts `x4mcp_64.dll` **next to X4.exe** as well as in the
+extension folder, and the transport tries a bare filename first: for a bare
+name the OS loader searches the executable's own directory whatever the cwd is,
+while a name containing a separator does not get that treatment.
+
+If the bridge is connected but the game is not, check this first — the symptom
+is a live game process with **no network file descriptors at all**
+(`lsof -a -p <pid> -i` returns nothing).
+
 **IDs arrive in two shapes.** Enumerators return 64-bit cdata, printed by LuaJIT
 as `1234ULL`. `GetComponentData` returns engine Lua ids, printed as `ID: 1234`.
 `norm()` in `x4mcp_state.lua` reduces both to the same digit string. If that

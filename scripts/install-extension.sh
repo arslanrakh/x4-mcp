@@ -30,6 +30,11 @@ cp "$ROOT/extension/x4mcp"/ui/*.lua "$DEST/ui/"
 
 if [ -f "$ROOT/dist/x4mcp_64.dll" ]; then
   cp "$ROOT/dist/x4mcp_64.dll" "$DEST/"
+  # Also next to X4.exe. When the game is started the normal way -- Steam, GOG,
+  # a desktop shortcut -- its working directory is not the install folder, so a
+  # relative path to the extension copy does not resolve. A bare filename does,
+  # because the OS loader searches the executable's own directory first.
+  cp "$ROOT/dist/x4mcp_64.dll" "$X4_DIR/"
 else
   echo "warning: dist/x4mcp_64.dll is missing -- run native/build.sh" >&2
 fi

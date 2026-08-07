@@ -40,6 +40,12 @@ Copy-Item (Join-Path $root 'extension\x4mcp\ui\*.lua')    (Join-Path $dest 'ui')
 $dll = Join-Path $root 'dist\x4mcp_64.dll'
 if (Test-Path $dll) {
     Copy-Item $dll $dest -Force
+    # Also next to X4.exe. When the game is started the normal way -- Steam,
+    # GOG, a desktop shortcut -- its working directory is not the install
+    # folder, so a relative path to the extension copy does not resolve. A bare
+    # filename does, because the OS loader searches the executable's own
+    # directory first.
+    Copy-Item $dll $GameDir -Force
 } else {
     Write-Warning "dist\x4mcp_64.dll is missing -- run native\build.ps1"
 }
