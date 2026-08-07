@@ -395,6 +395,99 @@ local function jsonable(v, depth)
 	return out
 end
 
+-- Put a ship under a commander, or release it.
+--
+-- Not "create an order and hope". X4's own interact menu sets seven parameters
+-- on the AssignCommander order and then moves it to the front of the queue;
+-- a call that fills in fewer creates an order that reports success and changes
+-- nothing -- which is exactly how fleet edits appear to work and then do not.
+-- Reproduced from menu_interactmenu.lua's orderAssignCommander.
+--
+-- Two preconditions the game enforces, and both are easy to get backwards:
+-- the selectability check belongs on the SUBORDINATE rather than the commander,
+-- and a ship with no pilot cannot be assigned at all.
+X4MCP.ops.set_commander = function(args)
+	args = args or {}
+	local ship = to_universe_id(args.ship)
+	if ship == nil then error("set_commander requires args.ship", 0) end
+	local lid = to_luaid(ship)
+
+	local ok_sel, selectable = pcall(C.IsOrderSelectableFor, "AssignCommander", ship)
+	if not (ok_sel and selectable == true) then
+		return { ok = false, err = "not_selectable",
+			detail = "this ship cannot take an AssignCommander order" }
+	end
+
+	local ok_pilot, pilot = pcall(GetComponentData, lid, "assignedpilot")
+	if not ok_pilot or pilot == nil then
+		return { ok = false, err = "no_pilot",
+			detail = "a ship without a pilot cannot be assigned to a commander" }
+	end
+
+	-- No commander means release: the game models that as assigning to nobody.
+	local target = nil
+	local commander = args.commander
+	if commander ~= nil and commander ~= "" and tostring(commander) ~= "0" then
+		local ok_c, converted = pcall(ConvertStringToLuaID, tostring(commander))
+		if not ok_c then
+			return { ok = false, err = "bad_commander", detail = tostring(converted) }
+		end
+		target = converted
+	end
+
+	local idx = tonumber(C.CreateOrder(ship, "AssignCommander", false)) or 0
+	if idx == 0 then
+		return { ok = false, err = "create_failed", detail = "CreateOrder returned 0" }
+	end
+
+	local assignment = args.assignment or "attack"
+	local group = tonumber(args.group) or 1
+	local inform = args.inform ~= false
+
+	-- Positional, and parameter 7 is deliberately skipped, as in the original.
+	local params = {
+		[1] = target,        -- commander (nil releases)
+		[2] = assignment,    -- "attack", "interception", "defence", "trade", ...
+		[3] = group,         -- subordinate group, 1-based
+		[4] = true,          -- setgroupassignment
+		[5] = true,          -- cancelorders
+		[6] = true,          -- response
+		[8] = inform,        -- informfleetmanager
+	}
+	local failures = X4MCP_Json.array({})
+	for i = 1, 8 do
+		if params[i] ~= nil or i == 1 then
+			local ok_p, err_p = pcall(SetOrderParam, ship, idx, i, nil, params[i])
+			if not ok_p then
+				failures[#failures + 1] = "param " .. i .. ": " .. tostring(err_p)
+			end
+		end
+	end
+
+	pcall(C.EnableOrder, ship, idx)
+	if idx ~= 1 then
+		pcall(C.AdjustOrder, ship, idx, 1, true, false, false)
+	end
+
+	-- Report what the game actually believes now, not what we asked for.
+	local after = nil
+	local ok_after, cmd = pcall(GetCommander, lid)
+	if ok_after and cmd ~= nil then
+		after = id_str(type(cmd) == "table" and (cmd.controllableid or cmd[1]) or cmd)
+	end
+
+	return {
+		ok = true,
+		order_index = idx,
+		requested_commander = commander and tostring(commander) or nil,
+		commander_now = after,
+		assignment = assignment,
+		group = group,
+		param_failures = failures,
+		note = "the order is queued; re-read the ship to confirm it took effect",
+	}
+end
+
 -- Stations of other factions, on demand.
 --
 -- Deliberately not part of snapshot: the galaxy holds ~1450 stations and

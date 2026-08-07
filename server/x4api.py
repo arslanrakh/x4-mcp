@@ -112,6 +112,28 @@ LOOKUPS
     x4.free_ships()                ships with commander is None
     x4.fleet_of(ship)              its subordinates as Ship objects
 
+CHANGING FLEETS
+    x4.set_commander(ship, commander, assignment="attack", group=1)
+    x4.set_commander(ship, None)          # release from its fleet
+
+    Use this, never a hand-built AssignCommander order. The game needs seven
+    parameters and the order pushed to the front of the queue; a partial one
+    reports success and changes nothing, which is what makes fleet edits look
+    like they worked when they did not.
+
+    assignment: "attack" "interception" "defence" "trade" "mining"
+                "supplyfleet" "salvage" "police"
+
+    Two things that are easy to get backwards:
+      - The precondition check is on the SUBORDINATE, not the commander.
+        can_order(commander, "AssignCommander") answers a different question
+        and tells you nothing about whether the pairing is allowed.
+      - A ship with no pilot cannot be assigned at all. set_commander says so
+        explicitly instead of failing quietly.
+
+    Always re-read the ship afterwards. The order is queued, not instant, and
+    an existing order queue on the ship can delay or block it.
+
 FLEETS
     A fleet is a commander and its subordinates, and it nests: a ship can lead
     one wing while answering to another.
@@ -346,6 +368,30 @@ class X4:
             "force": force,
         }
         data = self._bridge.call("create_order", args, timeout=60.0)
+        if not data.get("ok"):
+            raise RuntimeError(f"{data.get('err')}: {data.get('detail')}")
+        return data
+
+    def set_commander(self, ship, commander=None, assignment: str = "attack",
+                      group: int = 1, inform: bool = True) -> dict:
+        """Put a ship under a commander, or release it with commander=None.
+
+        Use this rather than assembling an AssignCommander order by hand: the
+        game needs seven parameters and the order moved to the front of the
+        queue, and a partial one succeeds while changing nothing.
+
+        assignment: "attack", "interception", "defence", "trade", "mining",
+                    "supplyfleet", "salvage", "police"
+        """
+        ship_id = getattr(ship, "id", ship)
+        commander_id = getattr(commander, "id", commander)
+        data = self._bridge.call("set_commander", {
+            "ship": str(ship_id),
+            "commander": str(commander_id) if commander_id else "",
+            "assignment": assignment,
+            "group": group,
+            "inform": inform,
+        }, timeout=60.0)
         if not data.get("ok"):
             raise RuntimeError(f"{data.get('err')}: {data.get('detail')}")
         return data
