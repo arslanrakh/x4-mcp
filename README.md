@@ -261,6 +261,18 @@ the game can do. Two consequences worth stating plainly:
 - Ship names, station names and mission text come from the game and reach the
   agent's context. Treat them as untrusted input, the same as any web page.
 
+## Contributing
+
+[AGENTS.md](AGENTS.md) is the working guide — how the pieces fit, how to
+iterate without restarting the game every time, and the traps that cost real
+debugging. It is addressed to AI agents, since much of this is written by them,
+but it is the fastest way in for anyone.
+
+One convention worth calling out: when you work out how to do something through
+this bridge, write it back into `API_REFERENCE` in `server/x4api.py`. That text
+travels inside the tool description, so the next agent starts where you finished
+instead of rediscovering it.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

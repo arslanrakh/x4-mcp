@@ -1,0 +1,221 @@
+# Notes for agents working on x4mcp
+
+You are an AI agent. This repository is **x4mcp**, an MCP bridge between an
+agent and a running game of X4: Foundations. It has two halves: a game
+extension that opens a socket from inside X4, and an MCP server that gives you
+tools to read and control that game.
+
+You are probably here for one of two reasons, and they are related.
+
+## 1. Someone asked you to do something in the game
+
+**Assume it is a live test of this project, not small talk.** "Send my Katana to
+the shipyard on Mars" means: use the MCP tools, actually do it, and find out
+whether the feature works.
+
+So:
+
+- **Check the connection first.** `x4_status` tells you whether the game is
+  connected, whether a savegame is loaded, and whether the game is ticking.
+- **Try to complete the task with the tools.** Do not answer "I cannot control
+  the game" and do not explain which menus the player should click. If the
+  tools are attached, you can do it.
+- **Verify afterwards.** `x4.refresh()` and read the ship back. An order that
+  was created but never armed looks exactly like success from the call site.
+- **If a tool is missing, reach for `x4.eval_lua`.** The whole game API is
+  reachable from it — see below. Missing convenience is not a dead end.
+
+If the game does not answer, read the error. `x4_status` distinguishes "not
+connected", "no savegame loaded" and "not ticking" (the game window is in the
+background — X4 only runs its UI loop while it renders). None of those mean the
+bridge is broken.
+
+## 2. You hit a problem and worked out the answer
+
+**Write the answer back into the repository. This is the important part.**
+
+Every time an agent rediscovers the same trap, the project has failed at
+something it could have fixed once. When you solve something, ask where a future
+agent would have needed to know it, and put it there:
+
+| What you learned | Where it belongs |
+|---|---|
+| How to do a task with the API; a trap in the data | `API_REFERENCE` in `server/x4api.py` — it travels in the `x4_exec` tool description and is returned by `x4.help()` |
+| How you should behave (ask first, verify after) | the `x4_playbook` prompt, and `instructions=` on the server, both in `server/x4mcp_server.py` |
+| A capability the tool list does not advertise | tool `title`/`description` in `server/x4mcp_server.py` |
+| A missing operation | a new op in `extension/x4mcp/ui/x4mcp_state.lua`, then a method on `X4` in `server/x4api.py` |
+| A field the snapshot should carry | the collector in `x4mcp_state.lua` and the dataclass in `server/x4model.py` |
+| Anything cross-cutting | this file |
+
+Prefer editing the **prompts** over writing a longer answer in chat. A fix in
+the API reference helps every future session; an explanation in chat helps one.
+
+Two real examples from this project's history:
+
+- `free_ships()` returns ships with no commander — which includes fleet
+  *leaders*, so recruiting one silently tears apart a wing. The fix was not code;
+  it was three lines in `API_REFERENCE` under FLEETS.
+- An agent once answered "I cannot control X4 directly" even with the tools
+  attached, because the only tool was called `x4_exec` and the server
+  instructions said "inspect and plan". The fix was renaming, an explicit
+  `x4_order` tool, and rewriting the instructions to say CONTROL.
+
+## Architecture
+
+```
+agent ──MCP/HTTP :8766── x4mcp server ──TCP :8765── x4mcp_64.dll ── Lua in X4
+```
+
+X4 9.0 gives extensions a restricted Lua sandbox: **no `io`, no `os`, no
+`package`** when Protected UI Mode is on, and `ffi.C` replaced by a proxy that
+only allows the game's own API. Arbitrary C functions such as `fopen` or
+`CreateFileA` raise "Access to FFI function is restricted". A file-based bridge
+is therefore impossible.
+
+The one route out is `package.loadlib`, which exists only when Protected UI Mode
+is **off**. It loads `x4mcp_64.dll`, a small native library that owns a
+non-blocking TCP socket. Everything else follows from that constraint.
+
+The **game is the TCP client**: it dials out to the server and reconnects by
+itself. That is deliberate. Loading a savegame and reloading the UI both destroy
+and recreate the Lua state; because the game reconnects, neither needs handling.
+
+| Piece | File | Role |
+|---|---|---|
+| Native transport | `native/x4mcp.c` | Non-blocking socket, newline-framed JSON. Never blocks the game thread. |
+| Lua transport | `extension/x4mcp/ui/x4mcp_transport.lua` | Tick on `onUpdate`, heartbeat, reconnect, request dispatch |
+| Lua state collector | `extension/x4mcp/ui/x4mcp_state.lua` | `snapshot`, `find_stations`, orders, `eval` |
+| Lua JSON | `extension/x4mcp/ui/x4mcp_json.lua` | Encoder/decoder, written by hand for control over numbers |
+| Bridge | `server/bridge.py` | Listener, request/reply correlation, link health |
+| Game files | `server/gamefiles.py` | Install autodetection, `.cat` reading, artefact generation |
+| Object model | `server/x4model.py` | `Ship`/`Station`/`Sector`/`World`, catalogue lookups |
+| Agent-facing API | `server/x4api.py` | The `x4` object **and `API_REFERENCE`** |
+| MCP server | `server/x4mcp_server.py` | Tools, prompt, persistent code session |
+
+### The tick
+
+Everything game-side runs from `SetScript("onUpdate", ...)` rather than an MD
+cue. MD does not run in the main menu and freezes while the game is paused —
+and pausing is exactly when a player walks off to ask you something. The cost is
+that the tick stalls while the game window is in the background. If that ever
+has to be fixed, an MD cue can be added as a second tick source; `M.tick()` is
+idempotent for that reason.
+
+### Generated data is never committed
+
+`server/generated/` holds a ship catalogue (macro → canonical English name,
+class, race, size) and an API index (~2000 C function signatures). Both are
+rebuilt from the player's own archives at every server start, in under a second.
+Committing them would ship one machine's game version, DLC and mod set to
+everybody else. Do not add them to git.
+
+## Setup
+
+```bash
+cp .env.example .env          # set X4_DIR if autodetection fails, required for Docker
+./scripts/install-extension.sh   # or .ps1 on Windows
+docker compose up -d          # or ./scripts/run-server.sh
+```
+
+Then point an agent at `http://127.0.0.1:8766/mcp`. See `README.md` for the
+per-client commands.
+
+**Protected UI Mode must be off**, or the extension cannot load the DLL at all.
+Do not use the in-game toggle — it hot-reloads the interface and with heavy UI
+mods installed regularly leaves an empty menu. Quit the game and add
+`<uisafemode>false</uisafemode>` to `config.xml` in the X4 user folder.
+
+Configuration is entirely through environment variables (`.env`): `X4_DIR`,
+`X4MCP_GAME_PORT`, `X4MCP_HTTP_PORT`, `X4MCP_LANGUAGE`, `X4MCP_HTTP_HOST`,
+`X4MCP_TRANSPORT`. The game side reads `X4MCP_HOST` and `X4MCP_GAME_PORT` from
+the environment X4 itself runs in.
+
+## Development loop
+
+Restarting X4 costs about two and a half minutes. Avoid it.
+
+1. **Fastest — no reload at all.** `x4.eval_lua(code)` runs Lua inside the
+   running game. `C` is the FFI namespace, the engine's Lua globals
+   (`GetComponentData`, `SetOrderParam`, `ConvertStringToLuaID`) are in scope,
+   and `helpers` holds this project's own utilities. Use it to test any
+   hypothesis about the game API before writing it into the collector.
+2. **Changed Lua in `extension/`?** Run `./scripts/install-extension.sh`, then
+   ask the player to **load a savegame from the in-game menu**. That recreates
+   the menus environment and re-runs the extension's Lua — roughly 40 seconds,
+   no process restart.
+3. **Changed the server?** Just restart it. The game reconnects on its own
+   within a couple of seconds.
+4. **Changed the C?** `./native/build.sh`, reinstall, and restart X4 — the DLL
+   is loaded into the process and cannot be swapped live.
+
+Check Lua syntax before asking for a reload; a wasted reload costs the player a
+minute:
+
+```bash
+luajit -bl extension/x4mcp/ui/x4mcp_state.lua >/dev/null
+```
+
+Game-side logging goes through `DebugError`. Launch X4 with
+`-debug all -logfile x4mcp.log`; the file lands in the X4 user folder
+(`Documents/Egosoft/X4/<id>/`), not one level up.
+
+End-to-end check against a live game:
+
+```bash
+.venv/bin/python server/test_mcp.py
+```
+
+## Hard-won knowledge
+
+These cost real debugging. Do not rediscover them.
+
+**IDs arrive in two shapes.** Enumerators return 64-bit cdata, printed by LuaJIT
+as `1234ULL`. `GetComponentData` returns engine Lua ids, printed as `ID: 1234`.
+`norm()` in `x4mcp_state.lua` reduces both to the same digit string. If that
+ever breaks, `commander` stops matching the `id` it points at, fleet handling
+targets nothing, and the snapshot still looks perfectly healthy. `snapshot_tool.py`
+checks referential integrity for exactly this reason.
+
+**An empty Lua table is ambiguous.** `{}` could be `[]` or `{}`. List-valued
+fields are tagged with `X4MCP_Json.array()`; without it an empty
+`subordinates` arrives as an object and breaks list handling on the host.
+
+**`loaded` goes true before the universe exists.** The heartbeat flips as soon
+as the player component appears, well before ships are populated. A snapshot
+taken in that window returns zero of everything and looks like a broken
+collector. Wait, or re-request.
+
+**`is_fleet_lead` is not "has subordinates".** It is the game's fleet-manager
+flag and is often `False` for a ship commanding four others. To find out whether
+a ship leads anything, look at `subordinates`.
+
+**X4 accepts inapplicable orders silently.** The ship simply sits there and the
+failure goes to the debug log. Always check `C.IsOrderSelectableFor(order, ship)`
+first — `x4.order()` does this and refuses rather than reporting a success that
+never happens.
+
+**Order parameters are positional, and object arguments need tagging.** A bare
+number is not an object reference. The host sends `{"id": "1234"}` and the Lua
+side converts with `ConvertStringToLuaID`.
+
+**The game's own cdefs are visible to us.** `ffi.cdef` declarations are global to
+the LuaJIT state, so everything X4's menu files declare — `CreateOrder`,
+`EnableOrder`, `IsOrderSelectableFor` and ~2000 more — resolves through `C`
+without being redeclared. `x4.api("pattern")` searches them. Note that
+`SetOrderParam` is a **global Lua function**, not an FFI one; it is not in `C`.
+
+**Displayed names are worthless for logic.** The game may run in any language,
+and players rename ships. A ship called "Delilah's Swan Song" is a Syn; in a
+Russian install a Hyperion is "Гиперион". Match on `macro`, `model`, `owner`,
+`size`, `ship_type`, `sector_macro`. Use displayed names only when talking to
+the player, because that is what is on their screen.
+
+**Sector ids change between sessions.** Resolve sectors by `sector_macro`, then
+by id, and only then by name.
+
+## Writing style
+
+Comments and log messages are English throughout, including in the Lua and C.
+Explain *why* a thing is done, not what the line does — most of the odd-looking
+code here is odd because of a constraint documented above, and a comment that
+does not carry the constraint is worse than none.
