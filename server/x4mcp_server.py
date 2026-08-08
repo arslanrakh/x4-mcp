@@ -53,34 +53,35 @@ class CodeSession:
         self.calls = 0
 
     def _banner(self) -> str:
-        """Stamp every result with where it came from.
+        """A line about the link, but only when the link is the problem.
 
-        Without it neither the agent nor the player can tell a real reading of
-        the running game from something the model produced on its own, and an
-        answer about someone's save is worthless if its provenance is unclear.
-        Also surfaces staleness, which is the other thing that quietly makes an
-        answer wrong.
+        This used to be stamped on every result as provenance. It was a
+        constant string in the healthy case, which is the case almost every
+        time, so it bought nothing and cost context on every single call. The
+        tool's own name and description already say the data comes from a
+        running X4.
+
+        What is worth saying is what an agent would otherwise misread: an empty
+        result because no savegame is loaded looks exactly like an empty
+        result because the player owns nothing.
         """
-        x4 = self.ns["x4"]
         try:
-            st = x4.status()
+            st = self.ns["x4"].status()
         except Exception:
-            return "[X4 MCP | live game | link status unknown]"
+            return "[X4 MCP | link status unknown]"
 
+        if st.get("bind_error"):
+            return f"[X4 MCP | {st['bind_error']}]"
         if not st.get("connected"):
-            state = "NOT CONNECTED - the game is not running or the extension is not loaded"
-        elif not st.get("savegame_loaded"):
-            state = "connected, no savegame loaded (main menu)"
-        elif not st.get("ticking"):
-            state = "connected but NOT TICKING - the game window is in the background"
-        else:
-            state = "connected, savegame loaded"
-
-        age = st.get("snapshot_age_seconds")
-        freshness = "no snapshot yet" if age is None else f"snapshot {age}s old"
-        if st.get("paused"):
-            freshness += ", game paused"
-        return f"[X4 MCP | live game | {state} | {freshness}]"
+            return ("[X4 MCP | NOT CONNECTED - X4 is not running, or the "
+                    "extension did not load. Results below are not from a game.]")
+        if not st.get("savegame_loaded"):
+            return ("[X4 MCP | connected, but NO SAVEGAME IS LOADED (main menu) "
+                    "- the universe does not exist yet, so reads return nothing]")
+        if not st.get("ticking"):
+            return ("[X4 MCP | connected but NOT TICKING - the game window is in "
+                    "the background. Calls queue until the player switches back.]")
+        return ""
 
     def run(self, code: str) -> str:
         self.calls += 1
@@ -113,7 +114,8 @@ class CodeSession:
             out.write("\n" + traceback.format_exc())
 
         body = out.getvalue() or "(no output)"
-        text = self._banner() + "\n" + body
+        banner = self._banner()
+        text = f"{banner}\n{body}" if banner else body
         if len(text) > MAX_OUTPUT:
             head = text[: MAX_OUTPUT // 2]
             tail_text = text[-MAX_OUTPUT // 2:]

@@ -9,7 +9,6 @@ shipyard on Mars", and it queries the live game and gives the order.
 ```
 > how many ships do I have and how are my fleets organised?
 
-[X4 MCP | live game | connected, savegame loaded | snapshot 0.1s old]
 8 ships, 1 station, 124 known sectors
 
 Hyperion NQI-361 commands Katana JBK-764, Hyperion ZVK-956,

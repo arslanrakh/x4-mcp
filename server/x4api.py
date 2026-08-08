@@ -203,6 +203,12 @@ STATUS AND FAILURE
     background the tick stalls and calls time out. That is a delay, not a loss.
     A Lua error comes back as a message -- read it and fix your chunk.
 
+    Results carry NO header when the link is healthy, which is the normal case.
+    If a line in [X4 MCP | ...] brackets appears above your output, the link is
+    impaired and that line is the explanation for whatever looks wrong below
+    it -- an empty result with "no savegame loaded" above it means the universe
+    does not exist yet, not that the player owns nothing.
+
 WHEN YOU WORK SOMETHING OUT
     Save the working Lua with x4_cookbook -- that is what the cookbook is for,
     and it survives this session. Prose that does not fit in a recipe (a trap,
