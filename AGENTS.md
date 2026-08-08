@@ -20,10 +20,12 @@ So:
 - **Try to complete the task with the tools.** Do not answer "I cannot control
   the game" and do not explain which menus the player should click. If the
   tools are attached, you can do it.
-- **Verify afterwards.** `x4.refresh()` and read the ship back. An order that
-  was created but never armed looks exactly like success from the call site.
-- **If a tool is missing, reach for `x4.eval_lua`.** The whole game API is
-  reachable from it — see below. Missing convenience is not a dead end.
+- **Verify afterwards.** Read the ship back with another `x4.lua(...)`. An
+  order that was created but never armed looks exactly like success from the
+  call site.
+- **There is no missing tool to wait for.** `x4.lua(code)` runs Lua inside the
+  game, and the whole game API is reachable from it. If you want something the
+  Python side does not offer, write the Lua.
 
 If the game does not answer, read the error. `x4_status` distinguishes "not
 connected", "no savegame loaded" and "not ticking" (the game window is in the
@@ -43,8 +45,7 @@ agent would have needed to know it, and put it there:
 | How to do a task with the API; a trap in the data | `API_REFERENCE` in `server/x4api.py` — it travels in the `x4_exec` tool description and is returned by `x4.help()` |
 | How you should behave (ask first, verify after) | the `x4_playbook` prompt, and `instructions=` on the server, both in `server/x4mcp_server.py` |
 | A capability the tool list does not advertise | tool `title`/`description` in `server/x4mcp_server.py` |
-| A missing operation | a new op in `extension/x4mcp/ui/x4mcp_state.lua`, then a method on `X4` in `server/x4api.py` |
-| A field the snapshot should carry | the collector in `x4mcp_state.lua` and the dataclass in `server/x4model.py` |
+| A working Lua recipe | `API_REFERENCE` — as a recipe, **not** as a new wrapper. See "no wrappers" below |
 | Anything cross-cutting | this file |
 
 Prefer editing the **prompts** over writing a longer answer in chat. A fix in
@@ -52,13 +53,32 @@ the API reference helps every future session; an explanation in chat helps one.
 
 Two real examples from this project's history:
 
-- `free_ships()` returns ships with no commander — which includes fleet
-  *leaders*, so recruiting one silently tears apart a wing. The fix was not code;
-  it was three lines in `API_REFERENCE` under FLEETS.
+- A helper returning "ships with no commander" also returned fleet *leaders*,
+  so recruiting one silently tore apart a wing. The fix was not code; it was
+  three lines of warning in `API_REFERENCE`.
 - An agent once answered "I cannot control X4 directly" even with the tools
   attached, because the only tool was called `x4_exec` and the server
-  instructions said "inspect and plan". The fix was renaming, an explicit
-  `x4_order` tool, and rewriting the instructions to say CONTROL.
+  instructions said "inspect and plan". The fix was renaming and rewriting the
+  instructions to say CONTROL.
+
+## No wrappers
+
+**Do not add a method or an op for a game feature.** This is the project's one
+architectural rule and it has been violated once already, at cost.
+
+The whole X4 API is reachable from `x4.lua`: its `ffi.cdef` declarations are
+global to the Lua state, so ~2000 C functions and every engine Lua global are
+in scope. A wrapper can only ever expose the subset its author imagined, and
+the agent then inherits that limit for everything nobody anticipated.
+
+Nor is there a performance argument. `x4.lua` is already a bulk mechanism — a
+chunk that loops inside the game costs exactly one round trip, the same as a
+purpose-built snapshot operation, and is not restricted to fields somebody
+chose in advance.
+
+So the game side has exactly one operation, `eval`. When something is hard,
+the fix is a **recipe in `API_REFERENCE`**, or a better discovery path
+(`x4.source`, `x4.api`, `x4.order_params`) — never a new wrapper.
 
 ## Architecture
 
@@ -84,11 +104,10 @@ and recreate the Lua state; because the game reconnects, neither needs handling.
 |---|---|---|
 | Native transport | `native/x4mcp.c` | Non-blocking socket, newline-framed JSON. Never blocks the game thread. |
 | Lua transport | `extension/x4mcp/ui/x4mcp_transport.lua` | Tick on `onUpdate`, heartbeat, reconnect, request dispatch |
-| Lua state collector | `extension/x4mcp/ui/x4mcp_state.lua` | `snapshot`, `find_stations`, orders, `eval` |
+| Lua execution environment | `extension/x4mcp/ui/x4mcp_state.lua` | the single `eval` op, id plumbing, JSON-safe conversion |
 | Lua JSON | `extension/x4mcp/ui/x4mcp_json.lua` | Encoder/decoder, written by hand for control over numbers |
 | Bridge | `server/bridge.py` | Listener, request/reply correlation, link health |
-| Game files | `server/gamefiles.py` | Install autodetection, `.cat` reading, artefact generation |
-| Object model | `server/x4model.py` | `Ship`/`Station`/`Sector`/`World`, catalogue lookups |
+| Game files | `server/gamefiles.py` | Install autodetection, archive and loose-file reading, artefact generation |
 | Agent-facing API | `server/x4api.py` | The `x4` object **and `API_REFERENCE`** |
 | MCP server | `server/x4mcp_server.py` | Tools, prompt, persistent code session |
 
@@ -104,7 +123,8 @@ idempotent for that reason.
 ### Generated data is never committed
 
 `server/generated/` holds a ship catalogue (macro → canonical English name,
-class, race, size) and an API index (~2000 C function signatures). Both are
+class, race, size), an API index (~2000 C function signatures) and the
+parameter list of every order. All are
 rebuilt from the player's own archives at every server start, in under a second.
 Committing them would ship one machine's game version, DLC and mod set to
 everybody else. Do not add them to git.
@@ -134,11 +154,11 @@ the environment X4 itself runs in.
 
 Restarting X4 costs about two and a half minutes. Avoid it.
 
-1. **Fastest — no reload at all.** `x4.eval_lua(code)` runs Lua inside the
+1. **Fastest — no reload at all.** `x4.lua(code)` runs Lua inside the
    running game. `C` is the FFI namespace, the engine's Lua globals
    (`GetComponentData`, `SetOrderParam`, `ConvertStringToLuaID`) are in scope,
    and `helpers` holds this project's own utilities. Use it to test any
-   hypothesis about the game API before writing it into the collector.
+   hypothesis about the game API. Most work needs nothing else.
 2. **Changed Lua in `extension/`?** Run `./scripts/install-extension.sh`, then
    ask the player to **load a savegame from the in-game menu**. That recreates
    the menus environment and re-runs the extension's Lua — roughly 40 seconds,
