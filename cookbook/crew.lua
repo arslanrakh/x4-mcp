@@ -1,6 +1,7 @@
 --[[ x4mcp recipe
 signature: crew(container_id) -> array of {name, role, skill}
 tags: read, people
+verified: ran on a live save against a ship (captain) and the HQ (manager); the empty service and marine tiers were confirmed as amount 0
 
 Everyone aboard one ship or station: the pilot or station manager first, then
 the crew by role and skill tier.

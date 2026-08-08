@@ -1,6 +1,7 @@
 --[[ x4mcp recipe
 signature: activate_mission(name_or_id) -> active mission id | nil, reason
 tags: missions, write
+verified: compiled by the running game; from a session that activated 'Promotion to: Honorary Assistant' and read GetActiveMissionID back
 
 Make one of the accepted missions the active one (the one guidance points
 at). Matches on the mission id first, then on an exact name.

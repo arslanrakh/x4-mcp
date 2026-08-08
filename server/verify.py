@@ -106,7 +106,14 @@ print("set_commander reaches give_order:",
 # otherwise be reported against a line of the caller's chunk that is innocent.
 x4.cookbook.save("verify_probe", "function()\\n\\tlocal t = nil\\n\\treturn t.x\\nend",
                  "verify_probe() -> never returns",
-                 "Deliberately broken; written and removed by verify.py.")
+                 "Deliberately broken; written and removed by verify.py.",
+                 verified="not verified: it is meant to fail")
+try:
+    x4.cookbook.save("verify_probe2", "function() return 1 end", "s()", "d",
+                     verified="")
+    print("BUG: a save with no verification was accepted")
+except ValueError as e:
+    print("save without `verified` refused:", str(e).split(":")[0])
 saved = x4.cookbook.show("verify_probe")
 guilty = open(saved["file"]).read().splitlines().index("\\treturn t.x") + 1
 try:

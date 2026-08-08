@@ -1,6 +1,7 @@
 --[[ x4mcp recipe
 signature: set_commander(sub_id, commander_id, assignment, group) -> {index, commander_now} | nil, reason
 tags: orders, fleets, write
+verified: compiled by the running game; the parameter set is from a session whose fleet assignments were confirmed by reading the subordinate groups back
 
 Put a ship under a commander, or release it by passing commander_id = nil.
 

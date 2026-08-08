@@ -1,6 +1,7 @@
 --[[ x4mcp recipe
 signature: player_ships(fields) -> array of {id, commander, subordinates, ...fields}
 tags: read, ships, fleets
+verified: ran on a live save: 8 player ships, every commander and subordinate id resolving to another row
 
 Every ship the player owns, in one round trip.
 

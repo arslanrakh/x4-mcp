@@ -1,6 +1,7 @@
 --[[ x4mcp recipe
 signature: ship_orders(ship_id) -> {assignment, sector, orders = [{order, state}]}
 tags: read, orders, verify
+verified: ran on a live save: a Hyperion reported MoveWait started, MoveToObject setup
 
 What a ship is actually doing: its order queue with each entry's state, plus
 its assignment and sector.

@@ -1,6 +1,7 @@
 --[[ x4mcp recipe
 signature: fleet_group(leader_id, group) -> {assignment, docks_at_commander, members}
 tags: read, fleets, verify
+verified: ran on a live save: group 2 of two fleets read back as interception with docks_at_commander true
 
 What one subordinate group of a fleet contains and how it is configured:
 its members (id and name), its assignment, and whether it docks at the

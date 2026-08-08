@@ -1,6 +1,7 @@
 --[[ x4mcp recipe
 signature: player_stations(fields) -> array of {id, ...fields}
 tags: read, stations
+verified: ran on a live save: returned the player HQ with sector 'Grand Exchange I' and sectorid 168365580
 
 Every station the player owns. Same shape and the same defaults idea as
 cookbook.player_ships: `fields` is optional, `id` is always added as a digit

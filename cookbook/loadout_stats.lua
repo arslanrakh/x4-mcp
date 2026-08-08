@@ -1,6 +1,7 @@
 --[[ x4mcp recipe
 signature: loadout_stats(ids, fields) -> array of {id, name, hull_percent, ...fields}
 tags: read, ships, compare
+verified: ran on a live save: two Hyperions compared, shields 72578 against 54266
 
 Real combat statistics of ships as they are currently equipped -- not the
 paper numbers of the hull. Use it to answer "which of these two is stronger".

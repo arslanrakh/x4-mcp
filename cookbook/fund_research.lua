@@ -1,6 +1,7 @@
 --[[ x4mcp recipe
 signature: fund_research(hq_id, research) -> {required, transferred, hq_money} | nil, reason
 tags: research, hq, money, write
+verified: compiled by the running game; from a session that transferred 57311 credits to the HQ and re-read the balance. NOT re-run here: it moves the player's money
 
 Top the HQ account up to exactly the estimated price of one research, moving
 the shortfall from the player's own account and nothing more.

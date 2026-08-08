@@ -14,6 +14,7 @@ carries the rules. This file is for humans reading the repository.
 --[[ x4mcp recipe
 signature: dock_at(ship_id, station_id) -> index | nil, reason
 tags: orders, docking
+verified: ran on a live save: the ship's order queue read back as DockAndWait
 
 What it does, and — the part that matters — which trap it already handles.
 This is what a future session reads before deciding whether to use it.
@@ -26,6 +27,14 @@ end
 The header is `key: value` lines, then a blank line, then free text. The code
 below it is a Lua **function expression** and nothing else; the file name minus
 `.lua` is the recipe's name and has to be a bare Lua identifier.
+
+`verified` is required, and it carries the weight. Agents are told to save
+generously — every operation that worked, queries included — so the collection
+is expected to grow large and overlap itself; that is fine and intended. What
+is not fine is a recipe nobody checked. Requiring one line of *how* turns "do
+not save what you did not verify" from advice into something that shows up in
+the file, in search results, and in review. "Compiled only, never run" is an
+acceptable answer; silence is not.
 
 ## How a recipe reaches the game
 

@@ -56,13 +56,15 @@ class Recipe:
     signature: str
     description: str
     tags: list[str]
+    verified: str       # how it was checked, in the author's own words
     code: str
     code_start: int     # 1-based line in the file where `code` begins
     path: Path
 
     def brief(self) -> dict:
         return {"name": self.name, "signature": self.signature,
-                "tags": self.tags, "description": self.description}
+                "tags": self.tags, "verified": self.verified,
+                "description": self.description}
 
     def full(self) -> dict:
         return dict(self.brief(), code=self.code, file=str(self.path))
@@ -110,15 +112,16 @@ def _parse(path: Path) -> Recipe:
     return Recipe(name=path.stem,
                   signature=meta.get("signature") or f"{path.stem}(...)",
                   description="\n".join(description).strip(),
-                  tags=tags, code=code,
+                  tags=tags, verified=meta.get("verified", ""), code=code,
                   code_start=close + 2 + skipped, path=path)
 
 
-def _render(signature: str, description: str,
-            tags: list[str], code: str) -> str:
+def _render(signature: str, description: str, tags: list[str],
+            verified: str, code: str) -> str:
     lines = [HEADER_OPEN, f"signature: {signature}"]
     if tags:
         lines.append("tags: " + ", ".join(tags))
+    lines.append(f"verified: {verified}")
     lines.append("")
     lines.extend(description.strip().splitlines())
     lines.append(HEADER_CLOSE)
@@ -186,13 +189,14 @@ class Cookbook:
             recipes[recipe.name] = recipe
         return recipes, broken
 
-    def search(self, query: str = "", limit: int = 60) -> list[dict]:
+    def search(self, query: str = "", limit: int = 500) -> list[dict]:
         recipes, _ = self.load()
         rx = _matcher(query)
         hits = [r for r in recipes.values()
                 if rx is None
                 or rx.search(r.name) or rx.search(r.signature)
-                or rx.search(r.description) or rx.search(" ".join(r.tags))]
+                or rx.search(r.description) or rx.search(" ".join(r.tags))
+                or rx.search(r.verified)]
         return [r.brief() for r in hits[:limit]]
 
     def show(self, name: str) -> dict:
@@ -208,12 +212,17 @@ class Cookbook:
     # ---------------------------------------------------------------- write
 
     def save(self, name: str, code: str, signature: str, description: str,
-             tags: list[str] | str = "") -> dict:
+             verified: str, tags: list[str] | str = "") -> dict:
         """Write a recipe, replacing one of the same name.
 
         Replacing is the correct response to a recipe that misbehaved: leaving
         a wrong one in place is worse than having none, because the next
         session will trust it.
+
+        `verified` is required, and that is the whole mechanism behind "do not
+        save what you did not check". A rule that only says so is advisory; a
+        field that has to be filled in, lands in the file and shows up in
+        search makes the omission visible to the next reader and to the player.
         """
         name = (name or "").strip()
         if not NAME_RX.match(name):
@@ -240,8 +249,17 @@ class Cookbook:
                 "description is required. Write what it does and which trap it "
                 "handles -- that is the part which cannot be recovered from the "
                 "code.")
-        if HEADER_CLOSE in description or HEADER_CLOSE in signature:
-            raise CookbookError("']]' cannot appear in the signature or "
+        verified = " ".join((verified or "").split())
+        if not verified:
+            raise CookbookError(
+                "verified is required: say how you checked this, in one line, "
+                "from what you actually observed. For example \"ran on a live "
+                "save: the ship's commander read back as the new leader\". If "
+                "you only compiled it, say so -- the line is stored and read by "
+                "whoever trusts this next. If you cannot fill it in, you are "
+                "not ready to save.")
+        if any(HEADER_CLOSE in part for part in (description, signature, verified)):
+            raise CookbookError("']]' cannot appear in the header fields or the "
                                 "description: it closes the header block.")
 
         if isinstance(tags, str):
@@ -257,11 +275,11 @@ class Cookbook:
         self.dir.mkdir(parents=True, exist_ok=True)
         path = self.dir / f"{name}.lua"
         existed = path.exists()
-        path.write_text(_render(signature, description, tags, code),
+        path.write_text(_render(signature, description, tags, verified, code),
                         encoding="utf-8")
 
         return {"saved": name, "replaced": existed, "file": str(path),
-                "check": note,
+                "check": note, "verified": verified,
                 "use": f'x4.lua(\'return cookbook.{name}(...)\')'}
 
     def delete(self, name: str, reason: str) -> dict:
@@ -361,8 +379,8 @@ THE LOOP, IN THIS ORDER
  1. LOOK HERE FIRST, before writing new Lua for whatever the player asked.
         x4_cookbook(action="search", query="dock")
         x4_cookbook(action="search")            everything
-    Search answers with names, signatures, tags and descriptions -- enough to
-    decide. The code is one call away when you want it:
+    Search answers with names, signatures, tags, descriptions and how each was
+    verified -- enough to decide. The code is one call away when you want it:
         x4_cookbook(action="show", name="dock_at")
 
  2. IF ONE FITS, USE IT from x4_exec:
@@ -370,33 +388,76 @@ THE LOOP, IN THIS ORDER
     Recipes compose: a recipe may call another as cookbook.<name>(...).
 
  3. IF NONE FITS, work it out the usual way -- x4.order_params, x4.source,
-    x4.api, x4.lua -- do the task, and VERIFY the game actually changed.
+    x4.api, x4.lua -- do the task, and then CONFIRM IT HAPPENED by reading the
+    game back. An order that was created but never armed looks exactly like
+    success from the call site.
 
- 4. THEN SAVE IT. Work left only in the transcript is lost at the end of this
-    session.
+ 4. SAVE IT, WITHOUT ASKING, AND SAVE GENEROUSLY. This is part of finishing
+    the task, not a separate errand and not a decision to put to the player:
+    it writes a file in this repository, nothing else, and git can undo it.
+    Work left only in the transcript dies with this session.
+
+    Default to saving. Anything that worked -- a query, an order, a check, a
+    small helper you needed along the way -- is worth a recipe. Coverage is
+    the goal: a cookbook of two hundred recipes is a better cookbook, and a
+    recipe nobody ever calls costs nothing while a rediscovery costs a
+    session. When in doubt, save it.
         x4_cookbook(
             action="save", name="dock_at",
             signature="dock_at(ship_id, station_id) -> index | nil, reason",
             tags="orders, docking",
+            verified="ran on a live save: the Katana's order queue read back "
+                     "as DockAndWait, state started",
             description="Orders a ship to dock and makes it the current order. "
-                        "Checks IsOrderSelectableFor first and fills every "
-                        "parameter position: an under-filled order reports "
-                        "success and the ship never moves.",
+                        "Checks IsOrderSelectableFor first, because X4 accepts "
+                        "an inapplicable order silently and the ship just sits "
+                        "there.",
             code='function(ship_id, station_id) ... end')
 
- 5. IF A SAVED RECIPE FAILED YOU, DO NOT LEAVE IT THERE. Either
+ 5. IF A SAVED RECIPE MISLED YOU, DEAL WITH IT BEFORE YOU FINISH -- not next
+    time, and not by mentioning it in your answer. Either
         x4_cookbook(action="save", name="dock_at", ...)   same name, corrected
     or
         x4_cookbook(action="delete", name="dock_at",
                     reason="CreateOrder returns 0 for stations without a dock")
     A recipe that lies is worse than no recipe, because the next session
     trusts it. Errors raised inside a recipe are reported against the recipe's
-    own file, so you will know which of the two failed.
+    own file and line, so you will know which of the two was at fault.
+
+THE ONLY REASON NOT TO SAVE IS THAT IT IS NOT TRUE YET
+    Volume is not a problem here; a wrong recipe is. So the bar is honesty,
+    not importance. Hold off only when
+
+      - the task only half worked, or you never read the game back;
+      - you cannot say in one line how you checked it;
+      - it rested on an assumption you never resolved ("probably the Mars
+        shipyard").
+
+    None of these mean "give up on saving". They mean finish the check first,
+    or save it with a `verified` line that says exactly how far you got --
+    "compiled only, never run" is an honest recipe; a confident description of
+    something you never saw work is not.
+
+    A recipe that overlaps an existing one is fine. Prefer improving the
+    existing one under the SAME name when yours is plainly better, but never
+    let that stop you from saving: two overlapping recipes are cheap, and the
+    next session losing a day is not.
+
+    Read-only queries earn a recipe on the same terms as writes. Small helpers
+    do too -- if you needed it once, someone needs it again.
+
+MAKE IT GENERAL
+    Parameters, not the ids you happened to be holding: no ship, station,
+    faction, sector or mission id baked into the body, and no assumption about
+    this player, this save or this DLC set. What was specific to today's
+    request becomes an argument.
+
+    Name it for what it does -- `dock_at`, not `send_the_katana_to_mars`.
 
 ACTIONS
-    search   query (optional; name, signature, tags and text, regex allowed)
+    search   query (optional; name, signature, tags, text and verified; regex)
     show     name
-    save     name, code, signature, description, tags (comma separated)
+    save     name, code, signature, description, verified, tags
     delete   name, reason
 
 WHAT THE CODE MUST BE
@@ -409,13 +470,21 @@ WHAT THE CODE MUST BE
     cdata, so results survive the trip back and compare against each other.
   - Return something. On a refusal return nil and a reason string, so a caller
     can tell "did not apply" from "worked".
-  - Keep it general: parameters, not the ship id you happened to be using.
   - On save, the running game compiles the code and the save is refused if it
-    does not compile. Compiling is not working -- save only what you SAW WORK.
+    does not compile. Compiling is not working: it proves the syntax, nothing
+    about the game.
 
 WHAT TO WRITE IN `description`
     What a future session needs and cannot get from reading the code: what it
     is for, and which trap it already handles. "Checks IsOrderSelectableFor
     first, because X4 accepts an inapplicable order silently" is worth more
-    than any restatement of the lines below it.
+    than any restatement of the lines below it. Caveats belong here too --
+    anything that would make someone regret calling it.
+
+WHAT TO WRITE IN `verified`
+    One line, required, from what you actually observed -- not what you
+    intended. "Ran on a live save: GetCommander read back as the new leader"
+    is verification. "Should work" is not. If all you did was compile it, say
+    that; the line is stored in the file and shown in search, and the next
+    session weighs it before trusting the recipe.
 """

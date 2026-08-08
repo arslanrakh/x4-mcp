@@ -37,6 +37,7 @@ from mcp.server.mcpserver import MCPServer  # noqa: E402
 from x4api import API_REFERENCE, X4  # noqa: E402
 
 MAX_OUTPUT = 60_000     # characters returned to the model
+COMPACT_ABOVE = 12      # hits beyond which search lists signatures only
 
 
 class CodeSession:
@@ -134,8 +135,8 @@ def _cookbook_action(x4: X4, action: str, **kw) -> str:
 
     if action in ("search", "list", ""):
         recipes, broken = book.load()
-        hits = book.search(kw.get("query", ""))
         query = kw.get("query", "")
+        hits = book.search(query)
         head = (f"[X4 MCP | cookbook] {len(hits)} of {len(recipes)} recipes"
                 + (f" matching {query!r}" if query else "")
                 + f" — {book.dir}")
@@ -143,16 +144,30 @@ def _cookbook_action(x4: X4, action: str, **kw) -> str:
             return (head + "\n\nThe cookbook is empty. Work the task out with "
                     "x4.lua, then save the Lua that worked:\n"
                     '  x4_cookbook(action="save", name=..., signature=..., '
-                    "description=..., code=...)")
-        body = "\n\n".join(
-            f"{r['signature']}"
-            + (f"   [{', '.join(r['tags'])}]" if r["tags"] else "")
-            + "\n" + "\n".join("    " + ln if ln else ""
-                               for ln in r["description"].splitlines())
-            for r in hits)
-        tail = ('\n\nCall one:  x4.lua(\'return cookbook.<name>(...)\')  in x4_exec.'
-                '\nRead one:  x4_cookbook(action="show", name="<name>")'
-                "\nNothing fits? Work it out with x4.lua, then save it.")
+                    'description=..., verified=..., code=...)')
+
+        # The cookbook is meant to grow without limit, so a broad search
+        # collapses to one line each. Full descriptions on a hundred hits
+        # would bury the answer they exist to give.
+        if len(hits) > COMPACT_ABOVE:
+            body = "\n".join(
+                f"  {r['signature']}"
+                + (f"   [{', '.join(r['tags'])}]" if r["tags"] else "")
+                for r in hits)
+            tail = ("\n\nNarrow with a query to see descriptions, or read one "
+                    'in full:  x4_cookbook(action="show", name="<name>")')
+        else:
+            body = "\n\n".join(
+                f"{r['signature']}"
+                + (f"   [{', '.join(r['tags'])}]" if r["tags"] else "")
+                + "\n" + "\n".join("    " + ln if ln else ""
+                                   for ln in r["description"].splitlines())
+                + (f"\n    -- verified: {r['verified']}" if r["verified"] else
+                   "\n    -- NOT VERIFIED: nobody recorded how this was checked")
+                for r in hits)
+            tail = ('\n\nCall one:  x4.lua(\'return cookbook.<name>(...)\')  in x4_exec.'
+                    '\nRead one:  x4_cookbook(action="show", name="<name>")'
+                    "\nNothing fits? Work it out with x4.lua, then save it.")
         if broken:
             tail += "\n\nUnreadable files (fix or delete them):\n" + "\n".join(
                 f"  {f}: {why}" for f, why in broken.items())
@@ -163,6 +178,7 @@ def _cookbook_action(x4: X4, action: str, **kw) -> str:
         return (f"[X4 MCP | cookbook] {r['name']} — {r['file']}\n"
                 f"{r['signature']}"
                 + (f"   [{', '.join(r['tags'])}]" if r["tags"] else "")
+                + f"\nverified: {r['verified'] or '(nothing recorded -- treat with suspicion)'}"
                 + f"\n\n{r['description']}\n\n"
                 f"--- code (runs where x4.lua runs) ---\n{r['code']}\n")
 
@@ -170,11 +186,13 @@ def _cookbook_action(x4: X4, action: str, **kw) -> str:
         info = book.save(name=kw.get("name", ""), code=kw.get("code", ""),
                          signature=kw.get("signature", ""),
                          description=kw.get("description", ""),
+                         verified=kw.get("verified", ""),
                          tags=kw.get("tags", ""))
         verb = "replaced" if info["replaced"] else "saved"
         return (f"[X4 MCP | cookbook] {verb} {info['saved']} — {info['file']}\n"
-                f"check: {info['check']}\n"
-                f"use:   {info['use']}")
+                f"compile: {info['check']}\n"
+                f"verified: {info['verified']}\n"
+                f"use:     {info['use']}")
 
     if action == "delete":
         info = book.delete(kw.get("name", ""), kw.get("reason", ""))
@@ -222,7 +240,8 @@ def build_server(game_port: int, artifacts: dict | None = None,
             "happen in X4, do it with these tools instead of explaining which "
             "buttons to click. Work through x4_exec, writing Lua with "
             "x4.lua(...); check x4_cookbook first for Lua that already does "
-            "the job, and save what you work out back into it; use "
+            "the job, and save verified new solutions back into it before you "
+            "finish, without asking; use "
             "x4_status if something looks wrong. Never match ships or sectors "
             "by displayed names -- the game may run in any language."
         ),
@@ -245,12 +264,12 @@ def build_server(game_port: int, artifacts: dict | None = None,
     )
     def x4_cookbook(action: str, name: str = "", query: str = "", code: str = "",
                     signature: str = "", description: str = "", tags: str = "",
-                    reason: str = "") -> str:
+                    verified: str = "", reason: str = "") -> str:
         try:
             return _cookbook_action(x4, action, name=name, query=query,
                                     code=code, signature=signature,
                                     description=description, tags=tags,
-                                    reason=reason)
+                                    verified=verified, reason=reason)
         except CookbookError as e:
             # Returned rather than raised: this is the agent's own input to
             # fix, and the message says exactly how.
@@ -282,8 +301,13 @@ def build_server(game_port: int, artifacts: dict | None = None,
             + API_REFERENCE
             + "\nWORKING RULES\n"
             "  1. Search x4_cookbook before writing any Lua. Somebody may have\n"
-            "     already solved this against a live game; if not, solve it and\n"
-            "     save it there when it works.\n"
+            "     solved this against a live game already.\n"
+            "  1a. When you work something out and confirm it worked, save it\n"
+            "     there before you finish -- without asking, the same way you\n"
+            "     would not ask permission to write a comment. Save generously:\n"
+            "     queries count, small helpers count, overlap is fine. The only\n"
+            "     thing not to save is something you did not actually check.\n"
+            "     If a saved recipe misled you, correct or delete it now.\n"
             "  2. Read in bulk: one Lua chunk that loops inside the game, not\n"
             "     one call per ship.\n"
             "  3. Answer with what the player can see -- their ship names and\n"

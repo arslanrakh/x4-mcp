@@ -1,6 +1,7 @@
 --[[ x4mcp recipe
 signature: configure_group(leader_id, group, assignment, dock_at_commander) -> fleet_group(...)
 tags: fleets, write
+verified: compiled by the running game; its effects were read back here through fleet_group as interception plus dock-at-commander
 
 Set a subordinate group's assignment, and whether its ships return to the
 flagship when there is no fighting.

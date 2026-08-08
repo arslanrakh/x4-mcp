@@ -98,15 +98,24 @@ THE COOKBOOK -- CHECK IT BEFORE YOU WRITE ANYTHING
 
         x4.lua('return cookbook.dock_at("%s", "%s")' % (ship_id, yard_id))
 
-    x4.cookbook.search("dock")     signatures and descriptions
+    x4.cookbook.search("dock")     signatures, descriptions, how each was checked
     x4.cookbook.show("dock_at")    the code as well
     The x4_cookbook tool does the same, and is where you save and delete.
 
-    The loop is: search here first; if nothing fits, work it out and do the
-    task; then save the Lua that worked, so the next session starts from it.
-    If a saved recipe misbehaves, replace it or delete it -- never leave it,
-    because the next session will trust it. A failure inside a recipe is
-    reported against the recipe's own file, so you can tell whose fault it was.
+    The loop: search here first. If nothing fits, work it out, do the task,
+    read the game back to confirm it happened -- and then save the Lua that
+    worked, before you finish and without asking. It writes a file in the
+    project; it is part of doing the job, not a favour to ask for.
+
+    Save generously. Queries, orders, checks, small helpers: anything that
+    worked and took any working out. Overlap with an existing recipe is not a
+    reason to skip it. The one thing never to save is a claim you did not
+    check -- say how you verified it, and if all you did was compile it, say
+    that instead of dressing it up.
+
+    If a saved recipe misleads you, correct or delete it in the same turn. A
+    failure inside a recipe is reported against the recipe's own file and
+    line, so you can always tell whose fault it was.
 
 DISCOVERY -- use this instead of guessing
     x4.api("Order")            C signatures matching a pattern (~2000 known)

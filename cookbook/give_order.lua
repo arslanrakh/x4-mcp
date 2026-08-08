@@ -1,6 +1,7 @@
 --[[ x4mcp recipe
 signature: give_order(ship_id, order_id, params, front) -> {index, unset} | nil, reason
 tags: orders, write
+verified: compiled by the running game; the sequence it encodes is from a session whose ProtectStation and dock orders were confirmed in the ships' order queues
 
 Give one ship an order, the way the game's own interact menu does it:
 refuse if the order does not apply, create it disabled, fill the positional

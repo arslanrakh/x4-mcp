@@ -1,6 +1,7 @@
 --[[ x4mcp recipe
 signature: missions() -> array of accepted missions with id, name, description, reward
 tags: read, missions
+verified: ran on a live save: 4 accepted missions with names and rewards
 
 The player's ACCEPTED missions, with their full text.
 

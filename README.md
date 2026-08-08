@@ -203,13 +203,24 @@ functions, verified against a running game, stored as files in
 ```
 > put the Kukri in the Beta wing of Sol's Iron Vanguard
 
-[X4 MCP | cookbook] 2 of 15 recipes matching 'commander' — .../cookbook
+[X4 MCP | cookbook] 2 of 18 recipes matching 'commander' — .../cookbook
 set_commander(sub_id, commander_id, assignment, group) -> {index, commander_now}
     Put a ship under a commander, or release it...
+    -- verified: compiled by the running game; the parameter set is from a
+       session whose fleet assignments were confirmed by reading the groups back
 ```
 
-The agent is told to look here before writing new Lua, to save what it works
-out, and to **replace or delete a recipe that misled it** rather than leave it.
+The agent is told to look here before writing new Lua, and to **save
+generously** afterwards — without asking, queries as much as orders, overlap
+welcome. The collection is meant to grow; a wide search collapses to one line
+per recipe so it stays readable at any size.
+
+The one thing it must not do is save a claim it did not check. Every recipe
+carries a required `verified:` line, in the author's own words, saying how it
+was confirmed — "compiled only, never run" is an acceptable answer, silence is
+not. A recipe that later misleads gets **corrected under its own name or
+deleted with a reason**, in the same turn.
+
 Using one costs nothing: any chunk that mentions `cookbook.<name>` gets that
 recipe's definition prepended automatically, transitively, with no state kept
 inside the game — which matters, because loading a savegame destroys X4's Lua

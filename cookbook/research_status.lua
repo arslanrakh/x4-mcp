@@ -1,6 +1,7 @@
 --[[ x4mcp recipe
 signature: research_status(hq_id) -> {modules = [...], money}
 tags: read, research, hq
+verified: ran on a live save: 1 research module, HQ balance 111758
 
 What the headquarters is researching and what it is short of: the production
 data of each research module, plus the HQ account balance.

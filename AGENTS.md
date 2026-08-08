@@ -48,9 +48,24 @@ agent would have needed to know it, and put it there:
 | A capability the tool list does not advertise | tool `title`/`description` in `server/x4mcp_server.py` |
 | Anything cross-cutting | this file |
 
+**Save generously, and save without asking.** Anything that worked and took any
+working out earns a recipe — queries as much as orders, small helpers included.
+Overlap with an existing recipe is not a reason to skip it: two overlapping
+recipes cost nothing, and a rediscovery costs a session. The collection is meant
+to grow into the hundreds, and search collapses to one line per recipe once a
+result set gets wide.
+
+**The one thing never to save is a claim you did not check.** Every recipe
+carries a required `verified:` line saying how it was confirmed, in the author's
+own words. "Compiled only, never run" is an honest answer and a useful one; an
+assured description of something nobody saw work is how the cookbook would start
+lying. That field is the entire mechanism — a rule that only lives in a prompt
+is advisory, a field that lands in the file and shows up in search is not.
+
 **A recipe that misled you is a bug in this repository.** Replace it under the
-same name, or delete it with a reason. Leaving it is worse than never having
-written it, because the next session will trust it.
+same name, or delete it with a reason, in the same turn — not next time. Leaving
+it is worse than never having written it, because the next session will trust
+it.
 
 Prefer editing the **prompts** over writing a longer answer in chat. A fix in
 the API reference helps every future session; an explanation in chat helps one.

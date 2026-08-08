@@ -1,6 +1,7 @@
 --[[ x4mcp recipe
 signature: fleet_name(flagship_id, name) -> current name
 tags: fleets, write, read
+verified: read path ran on a live save over three flagships; the set path is from the session that named those three fleets
 
 Read a fleet's name, or set it by passing `name`.
 
