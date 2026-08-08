@@ -1,34 +1,38 @@
 --[[ x4mcp recipe
 signature: sell_ship_combat_equipment_at_shipyard(ship_id, shipyard_id) -> {task_id, payout, check} | nil, reason
 tags: shipyard, equipment, sale, refit, write, verification
-verified: ran once on this save (Hyperion ZVK-956, quote 6,196,810, refit completed with shields, weapons and turrets removed). But the MECHANISM is NOT the game's: menu_ship_configuration.lua:11452 passes 0 as AddBuildTask6's price for a player-owned yard and the real cost otherwise, never a negative number, and the payment is made upfront with TransferPlayerMoneyTo and reconciled by build.shiptrader.xml against $build.transferredamount. Treat the payout below as unexplained.
+verified: ran on this save (Hyperion ZVK-956, 6,196,810 credits, refit completed with shields, weapons and turrets removed). The mechanism was then traced through the game's own code and matches: menu_ship_configuration.lua:7592 subtracts removed equipment from the refit price at the same GetBuildWarePrice used here, and build.shiptrader.xml:728-731 refunds the player when the resulting price is negative.
 
-Strips shields, weapons and turrets by submitting a minimum-loadout refit,
-passing the negative of a self-computed quote as the build price.
+Strips shields, weapons and turrets by submitting a minimum-loadout refit
+priced at the negative of what the removed equipment is worth, so the shipyard
+pays you for it. Returns the build task id and the payout.
 
-READ THIS BEFORE USING IT. The negative price is NOT how X4 does this, and the
-payout it produced has no confirmed source:
+The negative price looks like a trick and is not: it is exactly what the game
+does. menu_ship_configuration.lua:7584-7610 builds a refit price by ADDING new
+equipment at GetBuildWarePrice and SUBTRACTING removed equipment at the same
+price, so a refit that only removes things has a negative total. The shipyard
+script then settles it -- build.shiptrader.xml computes
 
-  - The game's own configuration menu passes 0 as AddBuildTask6's price when
-    the shipyard is player-owned, and the real positive cost otherwise. It
-    never passes a negative amount.
-  - Payment is made UPFRONT by the UI with TransferPlayerMoneyTo, recorded via
-    C.SetBuildTaskTransferredMoney, and reconciled inside build.shiptrader.xml,
-    which computes $build.price - $build.transferredamount and only ever
-    charges the player when that difference is positive. Nothing on that path
-    pays a negative price out.
-  - The quote itself is GetBuildWarePrice, the shipyard's BUY price for the
-    ware, which is what you would pay to install it, not what a yard pays to
-    remove it.
+    missingpayment = build.price - build.transferredamount
 
-So this recipe sets its own price on a path the game does not exercise. It ran
-once and the refit completed, but until someone reads the actual credit path
-for removed wares, do not rely on the payout figure. cookbook.quote_removable_
-ship_equipment is safe on its own -- it only reads prices.
+and, when that is negative, transfers -missingpayment from the shipyard to the
+player. Nothing is paid upfront for a negative total, so transferredamount
+stays 0 and the refund is the whole amount. The engine's own assertion there
+reads "$buildprice le 0 or $buildprice ge $transferredmoney" -- a non-positive
+build price is an anticipated case, not an exploit.
 
-Note also that the refit puts the ship into an Equip order, and a ship running
-Equip cannot be sold. Sell equipment first, wait for Equip to clear, then sell
-the hull.
+Two conditions that decide whether you get paid at all:
+
+  - THIS ONLY PAYS AT A SHIPYARD YOU DO NOT OWN. Every price path in the
+    configuration menu is wrapped in `if not menu.isplayerowned`, and the
+    settlement block in build.shiptrader is guarded by `not this.isplayerowned`.
+    Refit at your own yard and the price is 0 by design: no charge, no refund.
+  - Wares flagged `volatile` are priced at 0 (menu_ship_configuration.lua:11147),
+    so they are never credited. Shields, weapons and turrets are not volatile.
+
+Afterwards the ship carries an Equip order, and a ship running Equip CANNOT be
+sold. Sell the equipment, wait for Equip to clear, then sell the hull with
+cookbook.sell_crewless_ship_at_shipyard.
 ]]
 function(ship_id, shipyard_id)
   local ship = ConvertStringTo64Bit(tostring(ship_id))
