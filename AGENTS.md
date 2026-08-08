@@ -198,6 +198,14 @@ own hull; `sector_macro` is where they are. Anything that means "the sector of
 this object" must read `sector_macro` first — reading `macro` filtered stations
 by the ship's model and matched nothing, while looking perfectly reasonable.
 
+**Generated tables can be incomplete, and the live game is the authority.**
+The catalogue, API index and order table are read from disk, which covers
+packed archives and loose mod folders. It does not cover mods deployed as
+Windows symlinks by a mod manager running under Wine: from the host side those
+are zero-byte files with a stray "?" in the name, readable by the game and not
+by us. When a table looks short, ask the game -- GetOrderDefinitions and
+friends always report what is actually loaded.
+
 **IDs arrive in two shapes.** Enumerators return 64-bit cdata, printed by LuaJIT
 as `1234ULL`. `GetComponentData` returns engine Lua ids, printed as `ID: 1234`.
 `norm()` in `x4mcp_state.lua` reduces both to the same digit string. If that

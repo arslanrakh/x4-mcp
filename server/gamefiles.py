@@ -166,6 +166,45 @@ def _read(dat: Path, offset: int, size: int) -> bytes:
         return fh.read(size)
 
 
+LOOSE_ROOTS = ("aiscripts", "md", "ui", "libraries", "t", "assets")
+
+
+def iter_files(game: Path, wanted, max_size: int = 8_000_000):
+    """Yield (logical_path, bytes) for every game file matching `wanted`.
+
+    Covers both packed and loose content. Mods routinely ship plain folders
+    rather than .cat archives -- reading only the archives makes their ships,
+    orders and scripts invisible, which shows up as a catalogue that silently
+    omits half of what the player actually has installed.
+
+    Loose files are yielded last so they override packed ones, matching how the
+    game itself resolves extensions.
+    """
+    for cat in archives(game):
+        dat = cat.with_suffix(".dat")
+        for inner, offset, size in cat_entries(cat):
+            if size <= max_size and wanted(inner):
+                yield inner, _read(dat, offset, size)
+
+    for ext in sorted(game.glob("extensions/*")):
+        if not ext.is_dir():
+            continue
+        for root in LOOSE_ROOTS:
+            base = ext / root
+            if not base.is_dir():
+                continue
+            for path in base.rglob("*"):
+                if not path.is_file():
+                    continue
+                inner = f"{root}/{path.relative_to(base).as_posix()}"
+                try:
+                    if path.stat().st_size > max_size or not wanted(inner):
+                        continue
+                    yield inner, path.read_bytes()
+                except OSError:
+                    continue
+
+
 # ------------------------------------------------------------------ catalogue
 
 TEXT_REF = re.compile(r"\{(\d+),(\d+)\}")
@@ -208,34 +247,31 @@ def build_catalog(game: Path, language: str = "en") -> dict:
     macros: dict[str, dict] = {}
     texts: dict[tuple[str, str], str] = {}
 
-    for cat in archives(game):
-        dat = cat.with_suffix(".dat")
-        for inner, offset, size in cat_entries(cat):
-            if inner == lang_file:
-                try:
-                    root = ET.fromstring(_read(dat, offset, size))
-                except ET.ParseError:
+    def wanted(path: str) -> bool:
+        return path == lang_file or bool(MACRO_RE.match(path))
+
+    for inner, blob in iter_files(game, wanted):
+        try:
+            root = ET.fromstring(blob)
+        except ET.ParseError:
+            continue
+        if inner == lang_file:
+            for page in root.iter("page"):
+                pid = page.get("id")
+                if pid is None:
                     continue
-                for page in root.iter("page"):
-                    pid = page.get("id")
-                    if pid is None:
-                        continue
-                    for t in page.iter("t"):
-                        tid = t.get("id")
-                        if tid is not None and t.text is not None:
-                            texts[(pid, tid)] = t.text
-            elif MACRO_RE.match(inner):
-                try:
-                    root = ET.fromstring(_read(dat, offset, size))
-                except ET.ParseError:
-                    continue
-                for macro in root.iter("macro"):
-                    name = macro.get("name")
-                    ident = macro.find("./properties/identification")
-                    if name and ident is not None:
-                        macros[name] = {"class": macro.get("class"),
-                                        "name_ref": ident.get("name"),
-                                        "race": ident.get("makerrace")}
+                for t in page.iter("t"):
+                    tid = t.get("id")
+                    if tid is not None and t.text is not None:
+                        texts[(pid, tid)] = t.text
+        else:
+            for macro in root.iter("macro"):
+                name = macro.get("name")
+                ident = macro.find("./properties/identification")
+                if name and ident is not None:
+                    macros[name] = {"class": macro.get("class"),
+                                    "name_ref": ident.get("name"),
+                                    "race": ident.get("makerrace")}
 
     catalog = {}
     for macro, info in macros.items():
@@ -254,12 +290,8 @@ def build_api_index(game: Path) -> dict:
     functions: dict[str, dict] = {}
     structs: set[str] = set()
 
-    for cat in archives(game):
-        dat = cat.with_suffix(".dat")
-        for inner, offset, size in cat_entries(cat):
-            if not LUA_RE.match(inner):
-                continue
-            text = _read(dat, offset, size).decode("utf-8", "replace")
+    for inner, blob in iter_files(game, lambda p: bool(LUA_RE.match(p))):
+            text = blob.decode("utf-8", "replace")
             if "ffi.cdef" not in text:
                 continue
             for body in CDEF_RE.findall(text):
@@ -287,12 +319,9 @@ def iter_source(game: Path):
     sequence, for instance, is only obvious once you have read the menu code
     that performs it.
     """
-    for cat in archives(game):
-        dat = cat.with_suffix(".dat")
-        for inner, offset, size in cat_entries(cat):
-            if not SOURCE_RE.match(inner) or size > 4_000_000:
-                continue
-            yield inner, _read(dat, offset, size).decode("utf-8", "replace")
+    for inner, blob in iter_files(game, lambda p: bool(SOURCE_RE.match(p)),
+                                  max_size=4_000_000):
+        yield inner, blob.decode("utf-8", "replace")
 
 
 def search_source(game: Path, pattern: str, limit: int = 40, context: int = 2,
@@ -330,7 +359,10 @@ def read_source(game: Path, path: str, start: int = 1, end: int | None = None) -
     raise FileNotFoundError(f"no such file in the game archives: {path}")
 
 
-ORDER_FILE_RE = re.compile(r"^aiscripts/order\..+\.xml$")
+# Any aiscript may declare an order, not only the ones named order.*.xml --
+# mods routinely use their own naming, and filtering by filename silently drops
+# their orders from the table.
+ORDER_FILE_RE = re.compile(r"^aiscripts/.+\.xml$")
 
 
 def build_order_params(game: Path) -> dict:
@@ -343,13 +375,9 @@ def build_order_params(game: Path) -> dict:
     hard-coded, so mod orders are described exactly like stock ones.
     """
     out: dict[str, dict] = {}
-    for cat in archives(game):
-        dat = cat.with_suffix(".dat")
-        for inner, offset, size in cat_entries(cat):
-            if not ORDER_FILE_RE.match(inner):
-                continue
+    for inner, blob in iter_files(game, lambda p: bool(ORDER_FILE_RE.match(p))):
             try:
-                root = ET.fromstring(_read(dat, offset, size))
+                root = ET.fromstring(blob)
             except ET.ParseError:
                 continue
             orders = [root] if root.tag == "order" else list(root.iter("order"))

@@ -2,15 +2,14 @@
 """
 MCP server for X4: Foundations.
 
-Exposes one code-execution tool rather than a tool per game concept. The reason
-is round trips: a fleet question means filtering ships, ranking sectors and
-comparing distances, and doing that through a dozen typed tool calls is slower
-and more brittle than sending one block of Python that does it locally against
-a single bulk snapshot.
+Exposes one code-execution tool rather than a tool per game concept, and the
+game side exposes exactly one operation behind it. Nothing here wraps a game
+feature: X4's own API is already fully reachable from Lua, so a wrapper could
+only ever offer a subset chosen by whoever wrote it.
 
 The price of that choice is discoverability -- with one tool there is no schema
 for the model to read. It is paid back in the tool description, which carries
-the full API reference, and by x4.help() returning the same text on demand.
+the full reference, and by x4.help() returning the same text on demand.
 
 Usage:
     x4mcp_server.py                      # stdio, for Claude Desktop / Code
@@ -34,7 +33,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from bridge import GameBridge, GameNotConnected  # noqa: E402
 from mcp.server.mcpserver import MCPServer  # noqa: E402
 from x4api import API_REFERENCE, X4  # noqa: E402
-from x4model import Player, Sector, Ship, Station, World  # noqa: E402
 
 MAX_OUTPUT = 60_000     # characters returned to the model
 
@@ -48,14 +46,7 @@ class CodeSession:
     """
 
     def __init__(self, x4: X4):
-        self.ns: dict = {
-            "x4": x4,
-            "Ship": Ship,
-            "Station": Station,
-            "Sector": Sector,
-            "Player": Player,
-            "World": World,
-        }
+        self.ns: dict = {"x4": x4}
         self.calls = 0
 
     def _banner(self) -> str:
@@ -137,12 +128,10 @@ def prepare_artifacts(game_dir: str | None, language: str) -> dict:
     own version, DLC and mods instead of whatever the author happened to have.
     """
     from gamefiles import ensure_artifacts, find_game_dir
-    from x4model import load_catalog
 
     game = find_game_dir(game_dir)
     cache = Path(__file__).resolve().parent / "generated"
     info = ensure_artifacts(game, cache, language)
-    load_catalog(cache / "catalog.json")
     return info
 
 
@@ -161,7 +150,8 @@ def build_server(game_port: int, artifacts: dict | None = None) -> MCPServer:
             "fleets, and give orders -- dock, move, attack, mine, trade, "
             "escort, reorganise fleets. When the player asks for something to "
             "happen in X4, do it with these tools instead of explaining which "
-            "buttons to click. Start with x4_exec and x4.refresh(); use "
+            "buttons to click. Work through x4_exec, writing Lua with "
+            "x4.lua(...); use "
             "x4_status if something looks wrong. Never match ships or sectors "
             "by displayed names -- the game may run in any language."
         ),
@@ -176,35 +166,6 @@ def build_server(game_port: int, artifacts: dict | None = None) -> MCPServer:
     )
     def x4_exec(code: str) -> str:
         return session.run(code)
-
-    @server.tool(
-        name="x4_order",
-        title="Order a ship in X4",
-        description=(
-            "Give a ship in the running X4 game a direct order: dock, move, "
-            "attack, mine, trade, escort, patrol and so on. This changes the "
-            "player's game.\n\n"
-            "ship_id     id from x4_exec (x4.refresh(); x4.find('Katana')[0].id)\n"
-            "order       order id from the game registry, e.g. 'DockAndWait', "
-            "'MoveToObject', 'Attack', 'Escort'. List them with x4.orders().\n"
-            "params      positional order parameters as JSON. Object arguments "
-            "must be tagged: [{\"id\": \"1234\"}] so they arrive as engine ids.\n\n"
-            "Refuses orders the ship cannot take rather than silently doing "
-            "nothing. For complex work (finding the target, checking fleets, "
-            "several orders at once) prefer x4_exec."
-        ),
-    )
-    def x4_order(ship_id: str, order: str, params: str = "[]",
-                 first: bool = True, force: bool = False) -> dict:
-        import json as _json
-        try:
-            parsed = _json.loads(params) if params else []
-        except _json.JSONDecodeError as e:
-            return {"ok": False, "error": f"params is not valid JSON: {e}"}
-        try:
-            return x4.order(ship_id, order, parsed, first=first, force=force)
-        except Exception as e:  # surfaced to the model, which can correct itself
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     @server.tool(
         name="x4_status",

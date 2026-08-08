@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-One-shot health check of the whole bridge against a running game.
+One-shot health check of the bridge against a running game.
 
-Covers the pieces that have actually broken before: the link, the snapshot and
-its referential integrity, language-independent lookup, station discovery, and
-the order layer. Run it after any change that touches the game side.
+Everything here goes through x4.lua, the same way an agent would do it. That is
+the point: if these checks need a helper the agent does not have, the helper is
+in the wrong place.
 
 Usage:  .venv/bin/python server/verify.py [url]
 """
@@ -17,52 +17,77 @@ import mcp
 
 URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8766/mcp"
 
+# One Lua chunk, one round trip, arbitrary fields -- written by the caller
+# rather than fixed by the bridge.
+READ_SHIPS = '''
+ships = x4.lua("""
+    local out = {}
+    for _, uid in ipairs(helpers.enum(C.GetNumAllFactionShips,
+                                      C.GetAllFactionShips, "player")) do
+        local lid = helpers.to_luaid(uid)
+        local d = helpers.comp_data(lid, {"name", "idcode", "macro", "sector",
+                                          "hullpercent", "aicommand"})
+        d.id = helpers.id_str(uid)
+        d.commander = helpers.id_str(GetCommander(lid))
+        d.subs = {}
+        for _, s in ipairs(GetSubordinates(lid) or {}) do
+            d.subs[#d.subs+1] = helpers.id_str(s)
+        end
+        out[#out+1] = d
+    end
+    return out
+""")
+print("ships read:", len(ships))
+'''
+
 CHECKS = [
-    ("snapshot", """
-x4.refresh()
-print(x4.summary())
-"""),
-    ("id integrity", """
-bad = []
-for s in x4.ships:
-    if s.commander and not x4.ship(s.commander):
-        bad.append(f"{s.label}.commander -> {s.commander}")
-    bad += [f"{s.label}.sub -> {m}" for m in s.subordinates if not x4.ship(m)]
+    ("bulk read written in lua", READ_SHIPS + '''
+for s in ships[:4]:
+    print(f"  {x4.model(s['macro']) or '?':22} {s['idcode']}  {s['sector']}")
+'''),
+    ("id consistency", '''
+by_id = {s["id"]: s for s in ships}
+# .get(): assigning nil to a Lua table key removes it, so fields that were
+# nil in the game are simply absent here rather than present and null.
+bad = [f"{s['idcode']} -> {s.get('commander')}" for s in ships
+       if s.get("commander") and s["commander"] not in by_id]
+bad += [f"{s['idcode']} -> {m}" for s in ships for m in s.get("subs", [])
+        if m not in by_id]
 print("unresolved references:", bad or "none")
-"""),
-    ("language independence", """
-sample = next((s for s in x4.ships if s.model and s.name), None)
-for q in ([sample.model, sample.name, sample.kind] if sample else []):
-    print(repr(q), "->", len(x4.find(q)), "hit(s)")
-"""),
-    ("fleets", """
-for s in x4.ships:
-    if s.subordinates:
-        print(s.model, s.idcode, "->", [m.model for m in x4.fleet_of(s)])
-spare = [s for s in x4.ships if not s.commander and not s.subordinates]
-print("spare ships:", [(s.model, s.idcode) for s in spare])
-"""),
-    ("order registry", """
-orders = x4.orders()
-print("orders known:", len(orders))
-mods = [o["id"] for o in orders if o["id"].startswith(("VRO", "kAAIT"))]
-print("from mods:", mods[:6])
-"""),
-    ("station discovery", """
-ship = x4.ships[0]
-near = x4.find_stations(sector=ship, limit=10)
-print(f"stations in {ship.sector}:", [(s.name, s.owner) for s in near][:5])
-"""),
-    ("can_order", """
-ship = next(s for s in x4.ships if not s.is_docked) if any(
-    not s.is_docked for s in x4.ships) else x4.ships[0]
-for o in ("DockAndWait", "MoveToObject", "MiningRoutine"):
-    print(f"{ship.model} {ship.idcode} can {o}:", x4.can_order(ship, o))
-"""),
-    ("api discovery", """
-print("CreateOrder:", x4.api("^CreateOrder$"))
+'''),
+    ("fleets", '''
+for s in ships:
+    if s.get("subs"):
+        names = [x4.model(by_id[m]["macro"]) for m in s["subs"]]
+        print(" ", x4.model(s["macro"]), s["idcode"], "->", names)
+'''),
+    ("catalogue is language independent", '''
+print("catalogue entries:", len(x4.catalog()))
+print("macro -> model:", x4.model(ships[0]["macro"]))
+'''),
+    ("order definitions", '''
+all_orders = x4.order_params()
+print("orders known:", len(all_orders))
+print("mod orders:", [o for o in all_orders if o.startswith(("VRO", "kAAIT"))][:5])
+p = x4.order_params("AssignCommander")["params"]
+print("AssignCommander:", [(x["index"], x["name"]) for x in p][:4])
+'''),
+    ("reading the game's own source", '''
+hits = x4.source("IsOrderSelectableFor", limit=2, context=0)
+for h in hits:
+    print(" ", h["file"] + ":" + str(h["line"]))
+'''),
+    ("api discovery", '''
 print("api entries:", len(x4.api("", limit=10_000)))
-"""),
+print(x4.api("^IsOrderSelectableFor$"))
+'''),
+    ("writing: precondition check", '''
+first = ships[0]["id"]
+print("can dock:", x4.lua(
+    'return C.IsOrderSelectableFor("DockAndWait", ConvertStringTo64Bit("%s"))' % first))
+print("can mine:", x4.lua(
+    'return C.IsOrderSelectableFor("MiningRoutine", ConvertStringTo64Bit("%s"))' % first))
+'''),
 ]
 
 
