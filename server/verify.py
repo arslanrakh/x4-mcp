@@ -61,16 +61,19 @@ for s in ships:
         names = [x4.model(by_id[m]["macro"]) for m in s["subs"]]
         print(" ", x4.model(s["macro"]), s["idcode"], "->", names)
 '''),
-    ("catalogue is language independent", '''
-print("catalogue entries:", len(x4.catalog()))
-print("macro -> model:", x4.model(ships[0]["macro"]))
+    ("ship models, asked of the game", '''
+print("macro ->", x4.macro_data(ships[0]["macro"]))
 '''),
-    ("order definitions", '''
-all_orders = x4.order_params()
-print("orders known:", len(all_orders))
-print("mod orders:", [o for o in all_orders if o.startswith(("VRO", "kAAIT"))][:5])
-p = x4.order_params("AssignCommander")["params"]
-print("AssignCommander:", [(x["index"], x["name"]) for x in p][:4])
+    ("orders, asked of the game", '''
+orders = x4.orders()
+print("orders known:", len(orders))
+mods = [o["id"] for o in orders if o["id"].startswith(("VRO", "kAAIT"))]
+print("mod orders:", mods)
+print("AssignCommander:",
+      [(x["index"], x["name"]) for x in x4.order_params("AssignCommander")][:4])
+if mods:
+    print("a mod order's params:",
+          [(x["index"], x["name"]) for x in x4.order_params(mods[-1])])
 '''),
     ("reading the game's own source", '''
 hits = x4.source("IsOrderSelectableFor", limit=2, context=0)

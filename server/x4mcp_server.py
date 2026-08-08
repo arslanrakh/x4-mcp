@@ -235,9 +235,9 @@ def main():
 
     try:
         artifacts = prepare_artifacts(args.game_dir, args.language)
-        print(f"x4mcp: {artifacts['catalog_ships']} ships, "
-              f"{artifacts['api_functions']} API functions from "
-              f"{artifacts['game_dir']}", file=sys.stderr)
+        print(f"x4mcp: {artifacts['api_functions']} API signatures indexed "
+              f"from {artifacts['game_dir']}; orders, order parameters and "
+              f"ship models are asked of the running game", file=sys.stderr)
     except FileNotFoundError as e:
         # Not fatal: the bridge still works, only the canonical-name catalogue
         # and API index are missing. Say so loudly instead of failing silently.

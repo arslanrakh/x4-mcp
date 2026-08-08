@@ -407,25 +407,15 @@ def ensure_artifacts(game: Path, cache_dir: Path, language: str = "en") -> dict:
     every start, which removes any chance of them going stale."""
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    catalog = build_catalog(game, language)
-    (cache_dir / "catalog.json").write_text(
-        json.dumps(catalog, indent=1, ensure_ascii=False, sort_keys=True))
-
     index = build_api_index(game)
     (cache_dir / "api_index.json").write_text(
         json.dumps(index, indent=1, ensure_ascii=False, sort_keys=True))
 
-    orders = build_order_params(game)
-    (cache_dir / "order_params.json").write_text(
-        json.dumps(orders, indent=1, ensure_ascii=False, sort_keys=True))
-
     return {
         "game_dir": str(game),
         "archives": len(archives(game)),
-        "catalog_ships": len(catalog),
         "api_functions": len(index["functions"]),
         "api_structs": len(index["structs"]),
-        "orders_described": len(orders),
         "language": language,
     }
 

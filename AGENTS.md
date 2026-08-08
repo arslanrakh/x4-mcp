@@ -218,13 +218,20 @@ own hull; `sector_macro` is where they are. Anything that means "the sector of
 this object" must read `sector_macro` first — reading `macro` filtered stations
 by the ship's model and matched nothing, while looking perfectly reasonable.
 
-**Generated tables can be incomplete, and the live game is the authority.**
-The catalogue, API index and order table are read from disk, which covers
-packed archives and loose mod folders. It does not cover mods deployed as
-Windows symlinks by a mod manager running under Wine: from the host side those
-are zero-byte files with a stray "?" in the name, readable by the game and not
-by us. When a table looks short, ask the game -- GetOrderDefinitions and
-friends always report what is actually loaded.
+**Ask the game, not the disk.** Orders, order parameters and ship models all
+come from live calls now, and that is not a preference: a mod deployed as
+Windows symlinks by a manager running under Wine is invisible from the host
+side (zero-byte files with a stray "?" in the name), while the game reads it
+fine. Parsing files silently omitted `kAAIT_MoveAvoid` and its parameters;
+asking the game returns them.
+
+Order parameters are only exposed for an order that exists on a ship, so
+x4.order_params creates it disabled, describes it, and removes it -- the ship
+never acts on it and its queue is restored. Verified per call.
+
+Only two things still read the installation, because no runtime equivalent
+exists: the index of C signatures (ffi cdefs cannot be enumerated) and
+searching the game's own scripts.
 
 **IDs arrive in two shapes.** Enumerators return 64-bit cdata, printed by LuaJIT
 as `1234ULL`. `GetComponentData` returns engine Lua ids, printed as `ID: 1234`.
