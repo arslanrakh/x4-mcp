@@ -16,6 +16,9 @@ services:
 
     volumes:
       - "${X4_DIR:?set X4_DIR in .env to your X4 folder}:/game:ro"
+      # Writable on purpose: this is where the agent saves the Lua it works
+      # out. Without the mount those recipes die with the container.
+      - "./cookbook:/app/cookbook"
 
     # Overrides anything in .env: inside the container these are fixed, and
     # only the host-side mapping below is configurable.
@@ -24,6 +27,7 @@ services:
       X4MCP_HTTP_HOST: 0.0.0.0
       X4MCP_HTTP_PORT: 8766
       X4MCP_GAME_PORT: 8765
+      X4MCP_COOKBOOK_DIR: /app/cookbook
       X4MCP_LANGUAGE: ${X4MCP_LANGUAGE:-en}
 
     ports:

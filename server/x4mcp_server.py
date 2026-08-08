@@ -31,6 +31,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from bridge import GameBridge, GameNotConnected  # noqa: E402
+from cookbook import TOOL_DESCRIPTION as COOKBOOK_REFERENCE  # noqa: E402
+from cookbook import CookbookError  # noqa: E402
 from mcp.server.mcpserver import MCPServer  # noqa: E402
 from x4api import API_REFERENCE, X4  # noqa: E402
 
@@ -120,6 +122,69 @@ class CodeSession:
         return text
 
 
+def _cookbook_action(x4: X4, action: str, **kw) -> str:
+    """One tool, four verbs, formatted for reading rather than parsing.
+
+    Text rather than JSON on purpose: the caller is a model deciding whether a
+    recipe fits, and a signature above its description is what answers that.
+    Code inside x4_exec can reach the same object as x4.cookbook.
+    """
+    book = x4.cookbook
+    action = (action or "").strip().lower()
+
+    if action in ("search", "list", ""):
+        recipes, broken = book.load()
+        hits = book.search(kw.get("query", ""))
+        query = kw.get("query", "")
+        head = (f"[X4 MCP | cookbook] {len(hits)} of {len(recipes)} recipes"
+                + (f" matching {query!r}" if query else "")
+                + f" — {book.dir}")
+        if not recipes:
+            return (head + "\n\nThe cookbook is empty. Work the task out with "
+                    "x4.lua, then save the Lua that worked:\n"
+                    '  x4_cookbook(action="save", name=..., signature=..., '
+                    "description=..., code=...)")
+        body = "\n\n".join(
+            f"{r['signature']}"
+            + (f"   [{', '.join(r['tags'])}]" if r["tags"] else "")
+            + "\n" + "\n".join("    " + ln if ln else ""
+                               for ln in r["description"].splitlines())
+            for r in hits)
+        tail = ('\n\nCall one:  x4.lua(\'return cookbook.<name>(...)\')  in x4_exec.'
+                '\nRead one:  x4_cookbook(action="show", name="<name>")'
+                "\nNothing fits? Work it out with x4.lua, then save it.")
+        if broken:
+            tail += "\n\nUnreadable files (fix or delete them):\n" + "\n".join(
+                f"  {f}: {why}" for f, why in broken.items())
+        return f"{head}\n\n{body}{tail}"
+
+    if action == "show":
+        r = book.show(kw.get("name", ""))
+        return (f"[X4 MCP | cookbook] {r['name']} — {r['file']}\n"
+                f"{r['signature']}"
+                + (f"   [{', '.join(r['tags'])}]" if r["tags"] else "")
+                + f"\n\n{r['description']}\n\n"
+                f"--- code (runs where x4.lua runs) ---\n{r['code']}\n")
+
+    if action == "save":
+        info = book.save(name=kw.get("name", ""), code=kw.get("code", ""),
+                         signature=kw.get("signature", ""),
+                         description=kw.get("description", ""),
+                         tags=kw.get("tags", ""))
+        verb = "replaced" if info["replaced"] else "saved"
+        return (f"[X4 MCP | cookbook] {verb} {info['saved']} — {info['file']}\n"
+                f"check: {info['check']}\n"
+                f"use:   {info['use']}")
+
+    if action == "delete":
+        info = book.delete(kw.get("name", ""), kw.get("reason", ""))
+        return (f"[X4 MCP | cookbook] deleted {info['deleted']}\n"
+                f"reason: {info['reason']}")
+
+    raise CookbookError(f"unknown action {action!r}. "
+                        "Use search, show, save or delete.")
+
+
 def prepare_artifacts(game_dir: str | None, language: str) -> dict:
     """Rebuild the game-derived data from the local installation.
 
@@ -135,10 +200,15 @@ def prepare_artifacts(game_dir: str | None, language: str) -> dict:
     return info
 
 
-def build_server(game_port: int, artifacts: dict | None = None) -> MCPServer:
+def build_server(game_port: int, artifacts: dict | None = None,
+                 cookbook_dir: str | None = None) -> MCPServer:
     bridge = GameBridge(port=game_port)
-    x4 = X4(bridge, game_dir=(artifacts or {}).get("game_dir"))
+    x4 = X4(bridge, game_dir=(artifacts or {}).get("game_dir"),
+            cookbook_dir=cookbook_dir)
     session = CodeSession(x4)
+    known = len(x4.cookbook.load()[0])
+    print(f"x4mcp: cookbook at {x4.cookbook.dir} ({known} recipes)",
+          file=sys.stderr)
     artifacts = artifacts or {}
 
     server = MCPServer(
@@ -151,7 +221,8 @@ def build_server(game_port: int, artifacts: dict | None = None) -> MCPServer:
             "escort, reorganise fleets. When the player asks for something to "
             "happen in X4, do it with these tools instead of explaining which "
             "buttons to click. Work through x4_exec, writing Lua with "
-            "x4.lua(...); use "
+            "x4.lua(...); check x4_cookbook first for Lua that already does "
+            "the job, and save what you work out back into it; use "
             "x4_status if something looks wrong. Never match ships or sectors "
             "by displayed names -- the game may run in any language."
         ),
@@ -166,6 +237,24 @@ def build_server(game_port: int, artifacts: dict | None = None) -> MCPServer:
     )
     def x4_exec(code: str) -> str:
         return session.run(code)
+
+    @server.tool(
+        name="x4_cookbook",
+        title="X4 cookbook: saved Lua recipes — look here before writing new Lua",
+        description=COOKBOOK_REFERENCE,
+    )
+    def x4_cookbook(action: str, name: str = "", query: str = "", code: str = "",
+                    signature: str = "", description: str = "", tags: str = "",
+                    reason: str = "") -> str:
+        try:
+            return _cookbook_action(x4, action, name=name, query=query,
+                                    code=code, signature=signature,
+                                    description=description, tags=tags,
+                                    reason=reason)
+        except CookbookError as e:
+            # Returned rather than raised: this is the agent's own input to
+            # fix, and the message says exactly how.
+            return f"[X4 MCP | cookbook] rejected: {e}"
 
     @server.tool(
         name="x4_status",
@@ -192,16 +281,22 @@ def build_server(game_port: int, artifacts: dict | None = None) -> MCPServer:
             "You are looking at a live X4: Foundations save through x4_exec.\n\n"
             + API_REFERENCE
             + "\nWORKING RULES\n"
-            "  1. Start with x4.refresh(). One call, then work locally.\n"
-            "  2. Answer with what the player can see: use .label for ships and\n"
+            "  1. Search x4_cookbook before writing any Lua. Somebody may have\n"
+            "     already solved this against a live game; if not, solve it and\n"
+            "     save it there when it works.\n"
+            "  2. Read in bulk: one Lua chunk that loops inside the game, not\n"
+            "     one call per ship.\n"
+            "  3. Answer with what the player can see -- their ship names and\n"
             "     the localised sector names, since that is what is on their\n"
-            "     screen. Match on .model / .macro / .owner internally.\n"
-            "  3. If a request is ambiguous -- 'make a fleet' out of one ship,\n"
+            "     screen. Match on macro / owner / class internally.\n"
+            "  4. If a request is ambiguous -- 'make a fleet' out of one ship,\n"
             "     'send it to the argon' with a dozen argon sectors -- print what\n"
             "     you found and ask the player before acting.\n"
-            "  4. Never break an existing fleet by accident: a ship with a\n"
+            "  5. Never break an existing fleet by accident: a ship with a\n"
             "     commander already answers to somebody.\n"
-            "  5. On a traceback, fix your own code and retry rather than\n"
+            "  6. Verify after writing. An order that was created but never\n"
+            "     armed looks exactly like success from the call site.\n"
+            "  7. On a traceback, fix your own code and retry rather than\n"
             "     reporting the error to the player.\n"
         )
 
@@ -231,6 +326,8 @@ def main():
                     help="X4 install folder (default: autodetect)")
     ap.add_argument("--language", default=_env("X4MCP_LANGUAGE", "en"),
                     help="language for canonical ship names in the catalogue")
+    ap.add_argument("--cookbook-dir", default=_env("X4MCP_COOKBOOK_DIR", None),
+                    help="where saved Lua recipes live (default: ./cookbook)")
     args = ap.parse_args()
 
     try:
@@ -244,7 +341,7 @@ def main():
         print(f"x4mcp: {e}", file=sys.stderr)
         artifacts = {"error": str(e)}
 
-    server = build_server(args.game_port, artifacts)
+    server = build_server(args.game_port, artifacts, args.cookbook_dir)
     if args.transport == "http":
         print(f"x4mcp: MCP on http://{args.host}:{args.http_port}/mcp; "
               f"the game dials into port {args.game_port}", file=sys.stderr)

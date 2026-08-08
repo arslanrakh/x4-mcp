@@ -29,6 +29,7 @@ Proton — the game half is a normal Windows DLL either way.
 - [Install](#install)
 - [Connect your agent](#connect-your-agent)
 - [What the agent can do](#what-the-agent-can-do)
+- [The cookbook](#the-cookbook)
 - [Configuration](#configuration)
 - [Building the DLL](#building-the-dll)
 - [Development](#development)
@@ -125,10 +126,11 @@ docker compose up -d
 > server directly instead. Docker is fine on Linux, where published ports live
 > on the host's own network stack.
 
-On start the server locates X4, reads its archives and regenerates a ship
-catalogue and an API index into `server/generated/`. That takes under a second
-and happens every time, so the data always matches your version, DLC and mods.
-Nothing game-derived is committed to this repository.
+On start the server locates X4 and indexes the ~2000 C function signatures its
+scripts declare, into `server/generated/`. That takes under a second and
+happens every time, so it always matches your version, DLC and mods. Everything
+else — the order list, order parameters, ship models — is asked of the running
+game rather than parsed from files. Nothing game-derived is committed here.
 
 ## Connect your agent
 
@@ -164,30 +166,65 @@ Three tools:
 | Tool | Purpose |
 |---|---|
 | `x4_exec(code)` | Run Python against the live game, in a namespace that persists between calls |
-| `x4_order(...)` | Give a ship a direct order |
+| `x4_cookbook(...)` | Search, read, save and delete the saved Lua recipes |
 | `x4_status()` | Link health: connected, ticking, savegame loaded |
 
-The full API reference travels inside the `x4_exec` description — with a single
-code-execution tool there is no schema for a model to introspect, so the
-description has to carry it.
+There is no tool per game feature, and that is the design. X4's `ffi.cdef`
+declarations are global to its Lua state, so **`x4.lua(code)` already reaches
+everything the game can do** — a wrapper could only ever expose the subset its
+author imagined. The full API reference travels inside the `x4_exec`
+description instead, because with one code-execution tool there is no schema
+for a model to introspect.
 
 ```python
-x4.refresh()                                  # one bulk read; the rest is local
-x4.find("Hyperion")                           # by name, model, idcode or macro
-x4.free_ships()                               # ships answering to nobody
-x4.find_stations(sector=ship, kinds=["shipyard"])
-x4.orders()                                   # order registry, mods included
-x4.order(ship, "DockAndWait", [{"id": yard.id}])
+x4.lua('''                                    # one chunk, one round trip
+    local out = {}
+    for _, uid in ipairs(helpers.enum(C.GetNumAllFactionShips,
+                                      C.GetAllFactionShips, "player")) do
+        local d = helpers.comp_data(helpers.to_luaid(uid), {"name", "idcode"})
+        d.id = helpers.id_str(uid)
+        out[#out+1] = d
+    end
+    return out
+''')
+x4.orders()                                   # every order, mods included
+x4.order_params("DockAndWait")                # asked of the running game
+x4.source("AssignCommander")                  # search the game's own scripts
 x4.api("Order")                               # search the game's C API
-x4.eval_lua("return C.GetNumOrderDefinitions()")
 ```
+
+## The cookbook
+
+Working out how to do something in X4 is most of the effort, and it used to be
+thrown away at the end of every session. Recipes are that work kept: Lua
+functions, verified against a running game, stored as files in
+[cookbook/](cookbook/).
+
+```
+> put the Kukri in the Beta wing of Sol's Iron Vanguard
+
+[X4 MCP | cookbook] 2 of 15 recipes matching 'commander' — .../cookbook
+set_commander(sub_id, commander_id, assignment, group) -> {index, commander_now}
+    Put a ship under a commander, or release it...
+```
+
+The agent is told to look here before writing new Lua, to save what it works
+out, and to **replace or delete a recipe that misled it** rather than leave it.
+Using one costs nothing: any chunk that mentions `cookbook.<name>` gets that
+recipe's definition prepended automatically, transitively, with no state kept
+inside the game — which matters, because loading a savegame destroys X4's Lua
+state without warning. Errors are reported against the recipe's own file and
+line, so a bad recipe is distinguishable from a bad caller.
+
+They are ordinary files: readable in a diff, editable by hand, and shareable —
+a recipe someone else worked out arrives with a `git pull`.
 
 ### Language independence
 
 The game may be installed in any language, so displayed names are treated as
-display only. Logic runs on stable identifiers — `macro`, `owner`, `size`,
-`ship_type`, `sector_macro` — and on canonical English model names resolved from
-the macro through a catalogue built from the game's own text database.
+display only. Logic runs on stable identifiers — `macro`, `owner`, `class`,
+`sectorid` — while `name` and `sector` are for talking to the player, since
+that is what is on their screen.
 
 That matters more than it sounds. A ship named "Delilah's Swan Song" is a Syn;
 in a Russian install a Hyperion is "Гиперион". Matching on the displayed name
@@ -207,6 +244,7 @@ list with examples per platform.
 | `X4MCP_LANGUAGE` | `en` | Language for canonical ship names |
 | `X4MCP_HTTP_HOST` | `127.0.0.1` | MCP bind address |
 | `X4MCP_TRANSPORT` | `http` | `http` or `stdio` |
+| `X4MCP_COOKBOOK_DIR` | `./cookbook` | Where saved Lua recipes are kept |
 
 The game side reads `X4MCP_HOST` and `X4MCP_GAME_PORT` too, from the
 environment X4 itself runs in; without them it uses the defaults.
@@ -238,11 +276,11 @@ The repository is the source of truth; the game folder is a build output.
 # up the new code in ~40s, without restarting X4
 ```
 
-Faster still: `x4.eval_lua(...)` runs Lua inside the game with no reload at all,
+Faster still: `x4.lua(...)` runs Lua inside the game with no reload at all,
 which is how most of this was developed.
 
 ```bash
-server/test_mcp.py         # end-to-end check against a running game
+.venv/bin/python server/verify.py   # end-to-end check against a running game
 ```
 
 ## Limitations
@@ -251,16 +289,16 @@ server/test_mcp.py         # end-to-end check against a running game
   its UI loop while rendering, so requests queue and are answered when you
   switch back. Nothing is lost; replies are delayed. `x4_status` reports this
   as `ticking: false`.
-- Sectors with no owner are missing from snapshots — the exposed API has no
-  galaxy-wide enumerator.
-- Snapshots cover the player's own property; NPC stations are fetched on demand
-  through `x4.find_stations()`.
+- The exposed API has no galaxy-wide sector enumerator, so unowned sectors have
+  to be reached another way.
+- A recipe compiles at save time, but nothing can prove it still *works* after
+  a game or mod update. That is what the replace-or-delete rule is for.
 
 ## Safety
 
-`x4_exec` runs arbitrary Python on your machine and `x4.eval_lua` runs arbitrary
-Lua inside your game. That is the design — it is what lets the agent do anything
-the game can do. Two consequences worth stating plainly:
+`x4_exec` runs arbitrary Python on your machine and `x4.lua` runs arbitrary Lua
+inside your game. That is the design — it is what lets the agent do anything the
+game can do. Two consequences worth stating plainly:
 
 - Keep a backup save while experimenting. An agent can reorganise your fleets
   or empty your account as easily as it can answer a question.
@@ -275,9 +313,11 @@ debugging. It is addressed to AI agents, since much of this is written by them,
 but it is the fastest way in for anyone.
 
 One convention worth calling out: when you work out how to do something through
-this bridge, write it back into `API_REFERENCE` in `server/x4api.py`. That text
-travels inside the tool description, so the next agent starts where you finished
-instead of rediscovering it.
+this bridge, write it back. Working Lua goes in the [cookbook](cookbook/) — save
+it with the `x4_cookbook` tool and the file lands in this repository. Prose that
+does not fit in a recipe, such as a trap or a rule of thumb, goes into
+`API_REFERENCE` in `server/x4api.py`, which travels inside the tool description.
+Either way the next agent starts where you finished instead of rediscovering it.
 
 ## License
 

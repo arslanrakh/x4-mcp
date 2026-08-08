@@ -21,12 +21,15 @@ introspect, so the description is all it has. x4.help() returns the same text.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
-from bridge import GameBridge
+from bridge import GameBridge, GameNotConnected
+from cookbook import LINE_RX, Cookbook, rewrite_error
 
 GENERATED = Path(__file__).resolve().parent / "generated"
+COOKBOOK_DIR = Path(__file__).resolve().parent.parent / "cookbook"
 
 API_REFERENCE = """\
 CONTROLS A RUNNING X4: FOUNDATIONS GAME -- READ AND WRITE.
@@ -58,7 +61,7 @@ THE ONE MECHANISM
                                               C.GetAllFactionShips, "player")) do
                 local lid = helpers.to_luaid(uid)
                 local d = helpers.comp_data(lid, {"name", "idcode", "macro",
-                                                  "sector", "hullpercent"})
+                                                  "sector", "sectorid"})
                 d.id = helpers.id_str(uid)
                 d.commander = helpers.id_str(GetCommander(lid))
                 d.subordinates = {}
@@ -88,6 +91,22 @@ HELPERS AVAILABLE INSIDE LUA
         the game is absent from the result, not present and None. Use .get().
       - Lua sequences come back as JSON arrays and Lua maps as objects, so a
         table you build with mixed keys will arrive as an object.
+
+THE COOKBOOK -- CHECK IT BEFORE YOU WRITE ANYTHING
+    Lua that earlier sessions worked out and saved. Every recipe the chunk
+    mentions is defined for you automatically, so using one is just:
+
+        x4.lua('return cookbook.dock_at("%s", "%s")' % (ship_id, yard_id))
+
+    x4.cookbook.search("dock")     signatures and descriptions
+    x4.cookbook.show("dock_at")    the code as well
+    The x4_cookbook tool does the same, and is where you save and delete.
+
+    The loop is: search here first; if nothing fits, work it out and do the
+    task; then save the Lua that worked, so the next session starts from it.
+    If a saved recipe misbehaves, replace it or delete it -- never leave it,
+    because the next session will trust it. A failure inside a recipe is
+    reported against the recipe's own file, so you can tell whose fault it was.
 
 DISCOVERY -- use this instead of guessing
     x4.api("Order")            C signatures matching a pattern (~2000 known)
@@ -161,6 +180,14 @@ NAMES ARE FOR THE PLAYER, NOT FOR LOGIC
     Song" is a Syn. Branch on macro, owner, class and purpose; use names when
     talking to the player, because that is what is on their screen.
 
+    Location is `sectorid`. `sector` is the sector's displayed name and is
+    localised; `macro` is the object's own hull, so grouping by it puts every
+    Hyperion in one "place". There is no sector_macro field on a ship or a
+    station -- for the sector's macro, read `macro` off the sectorid.
+
+    helpers.comp_data silently drops keys the game does not know, so a
+    misspelled or non-existent field looks like a missing value, not a typo.
+
 STATUS AND FAILURE
     x4.status()   connected, ticking, savegame_loaded, paused
     The game only answers while it renders frames; with its window in the
@@ -168,21 +195,27 @@ STATUS AND FAILURE
     A Lua error comes back as a message -- read it and fix your chunk.
 
 WHEN YOU WORK SOMETHING OUT
-    Write the recipe into API_REFERENCE in server/x4api.py so the next session
-    starts from it rather than rediscovering it. See AGENTS.md.
+    Save the working Lua with x4_cookbook -- that is what the cookbook is for,
+    and it survives this session. Prose that does not fit in a recipe (a trap,
+    a rule of thumb) goes into API_REFERENCE in server/x4api.py, which is this
+    text. See AGENTS.md.
 """
 
 
 class X4:
     """One way into the game, plus read-only knowledge about it."""
 
-    def __init__(self, bridge: GameBridge, game_dir: str | None = None):
+    def __init__(self, bridge: GameBridge, game_dir: str | None = None,
+                 cookbook_dir: str | Path | None = None):
         self._bridge = bridge
         self._game_dir = game_dir
         # Lazily loaded generated tables, keyed by filename.
         self._cache: dict[str, dict] = {}
         # Answers obtained from the running game, cached for the session.
         self._runtime: dict = {}
+        self.cookbook = Cookbook(
+            cookbook_dir or os.environ.get("X4MCP_COOKBOOK_DIR") or COOKBOOK_DIR,
+            verifier=self._compile_recipe)
 
     # ------------------------------------------------------ the mechanism
 
@@ -191,8 +224,23 @@ class X4:
 
         This is the interface, not a fallback. Loop and filter inside the chunk:
         one call is one round trip whatever the chunk does.
+
+        Any recipe the chunk mentions as cookbook.<name> is prepended to it, so
+        saved recipes are simply in scope. That costs nothing at runtime and
+        keeps no state in the game, which matters because a savegame load
+        destroys the Lua state without warning.
         """
-        data = self._bridge.call("eval", {"code": code}, timeout=timeout)
+        prelude, spans = self.cookbook.prelude_for(code)
+        chunk = f"{prelude}\n{code}" if prelude else code
+        try:
+            data = self._bridge.call("eval", {"code": chunk}, timeout=timeout)
+        except RuntimeError as e:
+            # The prelude shifted every line number; put them back, and name
+            # the recipe file when the failure happened inside one.
+            if prelude and LINE_RX.search(str(e)):
+                raise RuntimeError(rewrite_error(
+                    str(e), prelude.count("\n") + 1, spans)) from None
+            raise
         results = data.get("results") or []
         if len(results) == 1:
             return results[0]
@@ -200,6 +248,30 @@ class X4:
 
     # Older name, kept because it reads well next to Python code.
     eval_lua = lua
+
+    def _compile_recipe(self, code: str) -> tuple[bool, str]:
+        """Ask the game whether a candidate recipe compiles to a function.
+
+        Sent raw rather than through lua() so a recipe calling another recipe
+        does not drag the whole cookbook along; compiling never resolves those
+        references anyway. With the game unreachable the save still goes ahead
+        -- refusing to record working knowledge because X4 happens to be closed
+        would be the worse failure -- and the result says it was not checked.
+        """
+        try:
+            data = self._bridge.call(
+                "eval", {"code": f"local recipe = {code}\nreturn type(recipe)"},
+                timeout=20.0)
+        except GameNotConnected as e:
+            return True, f"not compiled ({e})"
+        except TimeoutError as e:
+            return True, f"not compiled ({e})"
+        except RuntimeError as e:
+            return False, str(e)
+        kind = (data.get("results") or [None])[0]
+        if kind != "function":
+            return False, f"that is a {kind}, not a function expression"
+        return True, "compiles in the running game"
 
     # -------------------------------------------------------- game files
 

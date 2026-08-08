@@ -42,11 +42,15 @@ agent would have needed to know it, and put it there:
 
 | What you learned | Where it belongs |
 |---|---|
-| How to do a task with the API; a trap in the data | `API_REFERENCE` in `server/x4api.py` — it travels in the `x4_exec` tool description and is returned by `x4.help()` |
+| **Lua that works** | the **cookbook** — save it with `x4_cookbook`, it lands in `cookbook/` as a file. This is the default answer |
+| A trap in the data; how to do a task in prose | `API_REFERENCE` in `server/x4api.py` — it travels in the `x4_exec` tool description and is returned by `x4.help()` |
 | How you should behave (ask first, verify after) | the `x4_playbook` prompt, and `instructions=` on the server, both in `server/x4mcp_server.py` |
 | A capability the tool list does not advertise | tool `title`/`description` in `server/x4mcp_server.py` |
-| A working Lua recipe | `API_REFERENCE` — as a recipe, **not** as a new wrapper. See "no wrappers" below |
 | Anything cross-cutting | this file |
+
+**A recipe that misled you is a bug in this repository.** Replace it under the
+same name, or delete it with a reason. Leaving it is worse than never having
+written it, because the next session will trust it.
 
 Prefer editing the **prompts** over writing a longer answer in chat. A fix in
 the API reference helps every future session; an explanation in chat helps one.
@@ -77,8 +81,13 @@ purpose-built snapshot operation, and is not restricted to fields somebody
 chose in advance.
 
 So the game side has exactly one operation, `eval`. When something is hard,
-the fix is a **recipe in `API_REFERENCE`**, or a better discovery path
+the fix is a **recipe in the cookbook**, or a better discovery path
 (`x4.source`, `x4.api`, `x4.order_params`) — never a new wrapper.
+
+The cookbook is not a loophole in that rule. A recipe is Lua an agent wrote,
+stored verbatim, readable in full and callable by anyone; it adds no capability
+and takes none away. A wrapper is code between the agent and the game that only
+its author can change.
 
 ## Architecture
 
@@ -109,7 +118,26 @@ and recreate the Lua state; because the game reconnects, neither needs handling.
 | Bridge | `server/bridge.py` | Listener, request/reply correlation, link health |
 | Game files | `server/gamefiles.py` | Install autodetection, archive and loose-file reading, artefact generation |
 | Agent-facing API | `server/x4api.py` | The `x4` object **and `API_REFERENCE`** |
+| Cookbook | `server/cookbook.py` | Recipe files, injection into a chunk, error mapping, **and the `x4_cookbook` tool text** |
 | MCP server | `server/x4mcp_server.py` | Tools, prompt, persistent code session |
+| Recipes | `cookbook/*.lua` | Saved Lua, one per file. Committed on purpose |
+
+### The cookbook
+
+Saved Lua, one file per recipe, under `cookbook/`. Format and rules are in
+[cookbook/README.md](cookbook/README.md); the workflow the agent is pushed
+through lives in `TOOL_DESCRIPTION` in `server/cookbook.py`.
+
+Recipes are injected, not uploaded. `x4.lua` scans the chunk for
+`cookbook.<name>`, prepends those definitions and anything they call, and sends
+one chunk. Nothing is cached game-side, because loading a savegame or reloading
+the UI destroys the Lua state — a cached definition would go stale invisibly.
+
+The prelude shifts line numbers, so `rewrite_error` maps a failure back to
+either "your chunk, line N" or the recipe's own file and line. That distinction
+is the whole point: it tells an agent whether to fix its call or fix the
+recipe. `verify.py` writes a deliberately broken recipe and checks the blame
+lands on the right line of the right file.
 
 ### The tick
 
@@ -122,12 +150,13 @@ idempotent for that reason.
 
 ### Generated data is never committed
 
-`server/generated/` holds a ship catalogue (macro → canonical English name,
-class, race, size), an API index (~2000 C function signatures) and the
-parameter list of every order. All are
-rebuilt from the player's own archives at every server start, in under a second.
-Committing them would ship one machine's game version, DLC and mod set to
-everybody else. Do not add them to git.
+`server/generated/` holds the API index — ~2000 C function signatures scraped
+from the game's own scripts — and nothing else; it is rebuilt from the player's
+archives at every server start, in under a second. Committing it would ship one
+machine's game version, DLC and mod set to everybody else. Do not add it to git.
+
+`cookbook/` is the opposite case and **is** committed: it is written by agents,
+not derived from anyone's installation, and sharing it is the point.
 
 ## Setup
 
@@ -179,10 +208,11 @@ Game-side logging goes through `DebugError`. Launch X4 with
 `-debug all -logfile x4mcp.log`; the file lands in the X4 user folder
 (`Documents/Egosoft/X4/<id>/`), not one level up.
 
-End-to-end check against a live game:
+End-to-end check against a live game. It also compiles every saved recipe, so
+run it after touching the cookbook:
 
 ```bash
-.venv/bin/python server/test_mcp.py
+.venv/bin/python server/verify.py
 ```
 
 ## Hard-won knowledge
@@ -213,10 +243,18 @@ The tick was verified alive during the test (the game logged `connection lost`
 when the host server went away), so this is not the background-stall problem.
 Run the server directly on such setups.
 
-**`Ship` and `Station` have both `macro` and `sector_macro`.** `macro` is their
-own hull; `sector_macro` is where they are. Anything that means "the sector of
-this object" must read `sector_macro` first — reading `macro` filtered stations
-by the ship's model and matched nothing, while looking perfectly reasonable.
+**The sector of an object is `sectorid`, not `macro` and not `sector_macro`.**
+`macro` is the object's own hull, so grouping by it puts every Hyperion in one
+"place" — a filter written that way matched nothing while looking perfectly
+reasonable. `sector` beside it is the sector's *displayed* name and therefore
+localised. Verified against 9.0 on both a ship and a station:
+`GetComponentData` returns `sector`, `sectorid` and `cluster`, and there is no
+`sector_macro` field at all. For the sector's macro, read `macro` off the
+`sectorid`.
+
+`helpers.comp_data` silently drops keys the game does not know, so asking for a
+field that does not exist looks like "this object has no sector" rather than
+like a typo.
 
 **Ask the game, not the disk.** Orders, order parameters and ship models all
 come from live calls now, and that is not a preference: a mod deployed as
@@ -237,7 +275,7 @@ searching the game's own scripts.
 as `1234ULL`. `GetComponentData` returns engine Lua ids, printed as `ID: 1234`.
 `norm()` in `x4mcp_state.lua` reduces both to the same digit string. If that
 ever breaks, `commander` stops matching the `id` it points at, fleet handling
-targets nothing, and the snapshot still looks perfectly healthy. `snapshot_tool.py`
+targets nothing, and the result still looks perfectly healthy. `verify.py`
 checks referential integrity for exactly this reason.
 
 **An empty Lua table is ambiguous.** `{}` could be `[]` or `{}`. List-valued
@@ -255,12 +293,13 @@ a ship leads anything, look at `subordinates`.
 
 **X4 accepts inapplicable orders silently.** The ship simply sits there and the
 failure goes to the debug log. Always check `C.IsOrderSelectableFor(order, ship)`
-first — `x4.order()` does this and refuses rather than reporting a success that
-never happens.
+first — `cookbook.give_order` does this and refuses rather than reporting a
+success that never happens.
 
 **Order parameters are positional, and object arguments need tagging.** A bare
-number is not an object reference. The host sends `{"id": "1234"}` and the Lua
-side converts with `ConvertStringToLuaID`.
+number is not an object reference: the order targets nothing and reports
+success. Pass `{id = "1234"}` to `cookbook.give_order`, which converts with
+`ConvertStringToLuaID`.
 
 **The game's own cdefs are visible to us.** `ffi.cdef` declarations are global to
 the LuaJIT state, so everything X4's menu files declare — `CreateOrder`,

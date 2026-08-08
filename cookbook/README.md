@@ -1,0 +1,50 @@
+# The cookbook
+
+Lua that was worked out against a running game once, kept so the next session
+starts from it. One file per recipe, and the files are the truth — the server
+re-reads them on every access, so editing one by hand or pulling someone else's
+takes effect immediately.
+
+Agents read and write these through the `x4_cookbook` MCP tool; its description
+carries the rules. This file is for humans reading the repository.
+
+## Format
+
+```lua
+--[[ x4mcp recipe
+signature: dock_at(ship_id, station_id) -> index | nil, reason
+tags: orders, docking
+
+What it does, and — the part that matters — which trap it already handles.
+This is what a future session reads before deciding whether to use it.
+]]
+function(ship_id, station_id)
+	...
+end
+```
+
+The header is `key: value` lines, then a blank line, then free text. The code
+below it is a Lua **function expression** and nothing else; the file name minus
+`.lua` is the recipe's name and has to be a bare Lua identifier.
+
+## How a recipe reaches the game
+
+Nothing is uploaded. When a chunk sent through `x4.lua(...)` mentions
+`cookbook.<name>`, the server prepends that recipe's definition — and anything
+it calls, transitively — and sends one chunk as before.
+
+That is deliberate. Loading a savegame or reloading the UI destroys X4's Lua
+state without warning, so anything cached game-side would go stale silently.
+This way a chunk always means exactly what the files say.
+
+Errors are reported back against the recipe's own file and line, not against
+the generated prelude, so a failure inside a saved recipe is distinguishable
+from a failure in the caller's Lua.
+
+## Rules for the code
+
+- Runs where `x4.lua` runs: `C`, `ffi`, `helpers`, and every engine Lua global.
+- Ids in and out are plain digit strings (`helpers.id_str`), never cdata.
+- Return a value; on a refusal return `nil` plus a reason, so a caller can tell
+  "did not apply" from "worked".
+- Recipes may call each other as `cookbook.<name>(...)`.

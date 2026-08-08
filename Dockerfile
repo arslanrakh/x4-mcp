@@ -10,6 +10,11 @@ RUN pip install --no-cache-dir -r server/requirements.txt
 
 COPY server/ server/
 
+# The saved Lua recipes. Copied so a plain `docker run` still has them; docker
+# compose mounts the host folder over this, which is what makes new ones
+# survive the container.
+COPY cookbook/ cookbook/
+
 # Inside a container the MCP listener has to bind on all interfaces, otherwise
 # the published port reaches nothing. Both ports stay fixed here; the host-side
 # mapping is where they are made configurable.
@@ -17,6 +22,7 @@ ENV X4MCP_TRANSPORT=http \
     X4MCP_HTTP_HOST=0.0.0.0 \
     X4MCP_HTTP_PORT=8766 \
     X4MCP_GAME_PORT=8765 \
+    X4MCP_COOKBOOK_DIR=/app/cookbook \
     X4_DIR=/game \
     PYTHONUNBUFFERED=1
 

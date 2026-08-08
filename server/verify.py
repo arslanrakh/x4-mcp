@@ -84,6 +84,42 @@ for h in hits:
 print("api entries:", len(x4.api("", limit=10_000)))
 print(x4.api("^IsOrderSelectableFor$"))
 '''),
+    ("cookbook: every saved recipe still compiles in this game", '''
+names = [r["name"] for r in x4.cookbook.search()]
+print("recipes:", len(names))
+broken = []
+for name in names:
+    code = x4.cookbook.show(name)["code"]
+    kind = x4.lua("local recipe = %s\\nreturn type(recipe)" % code)
+    if kind != "function":
+        broken.append(name)
+print("do not compile:", broken or "none")
+'''),
+    ("cookbook: a recipe runs, and composes with another", '''
+crewed = x4.lua('return cookbook.player_ships({"idcode"})')
+print("player_ships ->", len(crewed), "ships,", crewed[0]["idcode"])
+print("set_commander reaches give_order:",
+      x4.lua("return type(cookbook.give_order) .. \\" \\" .. type(cookbook.set_commander)"))
+'''),
+    ("cookbook: a failure inside a recipe is blamed on the recipe", '''
+# The prelude shifts every line number, so an error inside a recipe would
+# otherwise be reported against a line of the caller's chunk that is innocent.
+x4.cookbook.save("verify_probe", "function()\\n\\tlocal t = nil\\n\\treturn t.x\\nend",
+                 "verify_probe() -> never returns",
+                 "Deliberately broken; written and removed by verify.py.")
+saved = x4.cookbook.show("verify_probe")
+guilty = open(saved["file"]).read().splitlines().index("\\treturn t.x") + 1
+try:
+    x4.lua("return cookbook.verify_probe()")
+    print("BUG: the broken recipe did not fail")
+except RuntimeError as e:
+    print(e)
+    want = "cookbook/verify_probe.lua:%d" % guilty
+    assert want in str(e), "expected the error to point at " + want
+    print("blamed the right line of the right file:", want)
+finally:
+    print(x4.cookbook.delete("verify_probe", "temporary, written by verify.py"))
+'''),
     ("writing: precondition check", '''
 first = ships[0]["id"]
 print("can dock:", x4.lua(
