@@ -1,7 +1,7 @@
 --[[ x4mcp recipe
-signature: crew(container_id) -> array of {name, role, skill}
+signature: crew(container_id) -> array of {name, role, role_id, skill}
 tags: read, people
-verified: ran on a live save against a ship (captain) and the HQ (manager); the empty service and marine tiers were confirmed as amount 0
+verified: re-run on a live save: the HQ returns Ryo Chopra as manager and Olmanckussut as unassigned, with role_id 'unassigned' beside the displayed 'Unassigned'
 
 Everyone aboard one ship or station: the pilot or station manager first, then
 the crew by role and skill tier.
@@ -24,8 +24,10 @@ function(container_id)
 	local person = GetComponentData(lid, "assignedaipilot")
 	if person == nil then person = GetComponentData(lid, "tradenpc") end
 	if person ~= nil and IsValidComponent(person) then
-		local name, postname = GetComponentData(person, "name", "postname")
-		out[#out + 1] = { name = name or "", role = postname or "commander" }
+		local name, poststring, postname = GetComponentData(person, "name",
+		                                                    "poststring", "postname")
+		out[#out + 1] = { name = name or "", role = postname or "commander",
+		                  role_id = poststring or "post" }
 	end
 
 	local roles = ffi.new("PeopleInfo[64]")
@@ -34,28 +36,28 @@ function(container_id)
 		local role_id = ffi.string(roles[i].id)
 		local role_name = ffi.string(roles[i].name)
 		local tiers = tonumber(roles[i].numtiers) or 0
-		local seeds, found = nil, 0
 		if tiers > 0 then
 			local tierdata = ffi.new("RoleTierData[?]", tiers)
 			tiers = tonumber(C.GetRoleTiers(tierdata, tiers, container, roles[i].id)) or 0
 			for j = 0, tiers - 1 do
 				local amount = tonumber(tierdata[j].amount) or 0
 				if amount > 0 then
-					seeds = ffi.new("NPCSeed[?]", amount)
-					found = tonumber(C.GetRoleTierNPCs(seeds, amount, container,
+					local seeds = ffi.new("NPCSeed[?]", amount)
+					local found = tonumber(C.GetRoleTierNPCs(seeds, amount, container,
 						roles[i].id, tierdata[j].skilllevel)) or 0
 					for k = 0, found - 1 do
 						out[#out + 1] = { name = ffi.string(C.GetPersonName(seeds[k], container)),
-						                  role = role_name, skill = tierdata[j].skilllevel }
+						                  role = role_name, role_id = role_id,
+						                  skill = tierdata[j].skilllevel }
 					end
 				end
 			end
 		elseif role_id == "unassigned" then
-			seeds = ffi.new("NPCSeed[256]")
-			found = tonumber(C.GetRoleTierNPCs(seeds, 256, container, roles[i].id, 0)) or 0
+			local seeds = ffi.new("NPCSeed[256]")
+			local found = tonumber(C.GetRoleTierNPCs(seeds, 256, container, roles[i].id, 0)) or 0
 			for k = 0, found - 1 do
 				out[#out + 1] = { name = ffi.string(C.GetPersonName(seeds[k], container)),
-				                  role = role_name }
+				                  role = role_name, role_id = role_id }
 			end
 		end
 	end

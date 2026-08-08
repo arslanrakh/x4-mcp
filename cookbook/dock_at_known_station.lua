@@ -1,9 +1,9 @@
 --[[ x4mcp recipe
 signature: dock_at_known_station(ship_id, station_id) -> {index, check} | nil, reason
 tags: orders, docking, stations, visibility, verification
-verified: Ran on the live save: after the Terran shipyard in The Moon became known, Hyperion received DockAndWait; read back enabled and ready with no failed-order message.
+verified: Re-verified on the live save: Hyperion's DockAndWait was promoted to the first active order, with the previous MoveWait behind it and zero failed-order messages.
 
-Direct-docks a ship at a station only after the station is known to the player. It promotes DockAndWait to the front and returns the ship-specific queue and failed-order check. If the station is unknown, use move_to_sector_coordinates near it first.
+Direct-docks a ship at a station only after the station is known to the player. It promotes DockAndWait to the front and immediately reads this ship's queue and failed-order messages. If the station is unknown, use move_to_sector_coordinates near it first.
 ]]
 function(ship_id, station_id)
   if not cookbook.is_station_known_to_player(tostring(station_id)) then
