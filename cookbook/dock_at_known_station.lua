@@ -1,9 +1,9 @@
 --[[ x4mcp recipe
-signature: dock_at_known_station(ship_id, station_id) -> {index, check} | nil, reason
+signature: ship_id, station_id -> {index, check} | nil, reason
 tags: orders, docking, stations, visibility, verification
-verified: Re-verified on the live save: Hyperion's DockAndWait was promoted to the first active order, with the previous MoveWait behind it and zero failed-order messages.
+verified: Re-verified on a live save: the recipe creates and promotes DockAndWait for a known target; callers must wait for a game tick and inspect the returned queue and failure log before declaring success.
 
-Direct-docks a ship at a station only after the station is known to the player. It promotes DockAndWait to the front and immediately reads this ship's queue and failed-order messages. If the station is unknown, use move_to_sector_coordinates near it first.
+Correct docking procedure: (1) choose a station only from player-known discovery and trade data; never enumerate hidden global stations as a destination. (2) Confirm the target is known to the player before submitting DockAndWait. (3) Promote the order to the front. (4) Wait for at least one live game tick, then re-read the ship's active order queue and failed-order messages. Report success only when DockAndWait remains active and there is no new failure. A queued order is not confirmation of a reachable destination. If a failure reports an unreachable destination, do not claim success; select another player-known, reachable target and repeat the verification.
 ]]
 function(ship_id, station_id)
   if not cookbook.is_station_known_to_player(tostring(station_id)) then
