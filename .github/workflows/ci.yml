@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r server/requirements.txt pytest
+      - run: python -m pytest -q tests
+
+  dll:
+    # dist/x4mcp_64.dll must be exactly what native/ builds to with the pinned
+    # toolchain, and must load and talk under Wine.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rebuild and compare with dist/
+        run: native/reproduce.sh --check --smoke

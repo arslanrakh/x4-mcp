@@ -1,0 +1,36 @@
+name: release
+
+# Push a tag vX.Y.Z to publish a release whose DLL is built here, from the
+# tagged source, and checked against the committed dist/x4mcp_64.dll.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, compare with dist/, smoke test
+        run: native/reproduce.sh --check --smoke
+      - name: Checksum
+        run: |
+          mkdir out
+          cp dist/x4mcp_64.dll out/
+          (cd out && sha256sum x4mcp_64.dll > SHA256SUMS)
+          cat out/SHA256SUMS
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: out/x4mcp_64.dll
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/x4mcp_64.dll out/SHA256SUMS \
+            --title "$GITHUB_REF_NAME" --generate-notes

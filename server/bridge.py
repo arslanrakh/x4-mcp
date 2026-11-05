@@ -10,6 +10,12 @@ socket changed.
 
 One request is in flight per sequence number and replies are matched by it, so
 several callers can share the link without stepping on each other.
+
+A connection becomes the game only when its first line is the extension's
+hello. Until then it is a stranger: anything on the machine can open a TCP
+socket to this port, a web page included (a browser's fetch() sends an HTTP
+request line first). Adopting it would drop the real game and let it feed the
+agent made-up replies.
 """
 
 from __future__ import annotations
@@ -26,6 +32,8 @@ class GameNotConnected(RuntimeError):
 
 class GameBridge:
     HEARTBEAT_STALE = 5.0     # seconds; beyond this the game is not ticking
+    HELLO_TIMEOUT = 5.0       # seconds a new connection has to say hello
+    HELLO_MAX = 64 * 1024     # bytes read while waiting for it
 
     def __init__(self, port: int = 8765, host: str = "127.0.0.1"):
         self.port = port
@@ -40,6 +48,7 @@ class GameBridge:
         self.game_time: float | None = None
         self.paused = False
         self.connects = 0
+        self.rejected = 0
         self.hello: dict | None = None
         self.bind_error: str | None = None
         self._stop = False
@@ -69,30 +78,71 @@ class GameBridge:
             except OSError:
                 break
             conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            with self.cv:
-                old = self.conn
-                self.conn = conn
-                self.connects += 1
-                self.replies.clear()
-                self.cv.notify_all()
-            if old is not None:
-                try:
-                    old.close()
-                except OSError:
-                    pass
-            threading.Thread(target=self._read, args=(conn,), daemon=True).start()
+            threading.Thread(target=self._adopt, args=(conn,), daemon=True).start()
 
-    def _read(self, conn: socket.socket):
+    def _await_hello(self, conn: socket.socket) -> tuple[dict, bytes] | None:
+        """The first line, if it is the game's hello; None for anything else."""
         buf = b""
+        deadline = time.time() + self.HELLO_TIMEOUT
+        try:
+            while b"\n" not in buf:
+                remaining = deadline - time.time()
+                if remaining <= 0 or len(buf) > self.HELLO_MAX:
+                    return None
+                conn.settimeout(remaining)
+                chunk = conn.recv(4096)
+                if not chunk:
+                    return None
+                buf += chunk
+            conn.settimeout(None)
+        except OSError:
+            return None
+        line, rest = buf.split(b"\n", 1)
+        try:
+            msg = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        if not isinstance(msg, dict) or msg.get("t") != "hello":
+            return None
+        return msg, rest
+
+    def _adopt(self, conn: socket.socket):
+        greeted = self._await_hello(conn)
+        if greeted is None:
+            with self.cv:
+                self.rejected += 1
+            try:
+                conn.close()
+            except OSError:
+                pass
+            return
+        hello, rest = greeted
+        with self.cv:
+            old = self.conn
+            self.conn = conn
+            self.connects += 1
+            self.hello = hello
+            self.replies.clear()
+            self.cv.notify_all()
+        if old is not None:
+            try:
+                old.close()
+            except OSError:
+                pass
+        self._read(conn, rest)
+
+    def _read(self, conn: socket.socket, buf: bytes = b""):
         try:
             while True:
+                # Lines first: whatever arrived together with the hello is
+                # already in buf.
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    self._on_line(line.decode("utf-8", "replace").rstrip("\r"))
                 chunk = conn.recv(1 << 16)
                 if not chunk:
                     break
                 buf += chunk
-                while b"\n" in buf:
-                    line, buf = buf.split(b"\n", 1)
-                    self._on_line(line.decode("utf-8", "replace").rstrip("\r"))
         except OSError:
             pass
         finally:
@@ -150,6 +200,7 @@ class GameBridge:
             "seconds_since_heartbeat": (None if self.last_hb is None
                                         else round(time.time() - self.last_hb, 1)),
             "connects": self.connects,
+            "rejected_connections": self.rejected,
             "native": (self.hello or {}).get("native"),
         }
 

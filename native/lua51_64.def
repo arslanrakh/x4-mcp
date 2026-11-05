@@ -1,0 +1,22 @@
+; The Lua 5.1 C API functions x4mcp_64.dll imports from the game's
+; lua51_64.dll. build.sh and build.ps1 turn this into an import library, so the
+; DLL builds without X4 installed: the game is needed to run it, not to link it.
+; Every name here must be declared in lua_min.h; macros there (lua_newtable,
+; lua_pushcfunction) are not functions and are not listed.
+LIBRARY lua51_64.dll
+EXPORTS
+luaL_checkinteger
+luaL_checklstring
+luaL_error
+lua_createtable
+lua_gettop
+lua_pushboolean
+lua_pushcclosure
+lua_pushinteger
+lua_pushlstring
+lua_pushnil
+lua_pushnumber
+lua_pushstring
+lua_setfield
+lua_settop
+lua_type

@@ -143,9 +143,12 @@ and recreate the Lua state; because the game reconnects, neither needs handling.
 | Recipes | `cookbook/*.lua` | Saved Lua, one per file. Committed on purpose |
 
 Around them: `scripts/` installs the extension and runs the server (`.sh` and
-`.ps1` for each), `native/build.sh` and `build.ps1` rebuild the DLL, `dist/`
-holds the prebuilt DLL (committed on purpose, see `.gitignore`), and
-`Dockerfile` with `docker-compose.yml` is the container route.
+`.ps1` for each), `native/build.sh` and `build.ps1` rebuild the DLL,
+`native/reproduce.sh` rebuilds it with the pinned toolchain in
+`native/Dockerfile`, `dist/` holds the prebuilt DLL (committed on purpose, see
+`.gitignore`; CI checks it is exactly what `reproduce.sh` builds), `tests/`
+covers the listeners' defences, and `Dockerfile` with `docker-compose.yml` is
+the container route.
 
 ### The cookbook
 
@@ -200,8 +203,8 @@ mods installed regularly leaves an empty menu. Quit the game and add
 `<uisafemode>false</uisafemode>` to `config.xml` in the X4 user folder.
 
 Configuration is entirely through environment variables (`.env`): `X4_DIR`,
-`X4MCP_GAME_PORT`, `X4MCP_HTTP_PORT`, `X4MCP_HTTP_HOST`, `X4MCP_TRANSPORT`,
-`X4MCP_COOKBOOK_DIR` and `X4MCP_LANGUAGE`. The last is now only recorded in
+`X4MCP_GAME_PORT`, `X4MCP_HTTP_PORT`, `X4MCP_HTTP_HOST`, `X4MCP_ALLOWED_HOSTS`,
+`X4MCP_GAME_BIND`, `X4MCP_TRANSPORT`, `X4MCP_COOKBOOK_DIR` and `X4MCP_LANGUAGE`. The last is now only recorded in
 `x4_status`: live calls replaced the ship catalogue whose language it selected.
 The game side reads `X4MCP_HOST` and `X4MCP_GAME_PORT` from the environment X4
 itself runs in. The install scripts read `X4_DIR` from the shell environment
@@ -224,7 +227,10 @@ Restarting X4 costs about two and a half minutes. Avoid it.
    within a couple of seconds.
 4. **Changed the C?** `./native/build.sh`, reinstall, and restart X4 — the DLL
    is loaded into the process and cannot be swapped live. The build needs
-   MinGW-w64 and the game folder, since it links against `lua51_64.dll` there.
+   MinGW-w64, not the game: `native/lua51_64.def` lists the Lua functions the
+   DLL imports, so a new Lua API call goes there too. Before committing, run
+   `native/reproduce.sh` (Docker) and commit the `dist/` DLL it writes; CI
+   fails if `dist/` and the source disagree.
 
 Check Lua syntax before asking for a reload; a wasted reload costs the player a
 minute:

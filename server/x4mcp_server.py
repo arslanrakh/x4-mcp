@@ -34,6 +34,7 @@ from bridge import GameBridge, GameNotConnected  # noqa: E402
 from cookbook import TOOL_DESCRIPTION as COOKBOOK_REFERENCE  # noqa: E402
 from cookbook import CookbookError  # noqa: E402
 from mcp.server.mcpserver import MCPServer  # noqa: E402
+from mcp.server.transport_security import TransportSecuritySettings  # noqa: E402
 from x4api import API_REFERENCE, X4  # noqa: E402
 
 MAX_OUTPUT = 60_000     # characters returned to the model
@@ -220,9 +221,29 @@ def prepare_artifacts(game_dir: str | None, language: str) -> dict:
     return info
 
 
+def transport_security(extra_hosts: str | None) -> TransportSecuritySettings:
+    """Host and Origin checks against DNS rebinding, whatever the bind address.
+
+    x4_exec runs arbitrary Python, so a web page that reaches this endpoint
+    owns the machine (or the container). A browser always sends the page's own
+    host name; rebinding that name to 127.0.0.1 gets the request here but not
+    past this check. The SDK turns the check on by itself only when bound to a
+    loopback address -- not for 0.0.0.0, which is what Docker needs.
+    """
+    hosts = ["127.0.0.1", "localhost", "[::1]"]
+    hosts += [h.strip() for h in (extra_hosts or "").split(",") if h.strip()]
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[h for host in hosts for h in (host, f"{host}:*")],
+        allowed_origins=[o for host in hosts
+                         for o in (f"http://{host}", f"http://{host}:*")],
+    )
+
+
 def build_server(game_port: int, artifacts: dict | None = None,
-                 cookbook_dir: str | None = None) -> MCPServer:
-    bridge = GameBridge(port=game_port)
+                 cookbook_dir: str | None = None,
+                 game_host: str = "127.0.0.1") -> MCPServer:
+    bridge = GameBridge(port=game_port, host=game_host)
     x4 = X4(bridge, game_dir=(artifacts or {}).get("game_dir"),
             cookbook_dir=cookbook_dir)
     session = CodeSession(x4)
@@ -345,9 +366,14 @@ def main():
                     default=_env("X4MCP_TRANSPORT", "http"))
     ap.add_argument("--game-port", type=int, default=_env("X4MCP_GAME_PORT", 8765),
                     help="port the X4 extension connects to")
+    ap.add_argument("--game-host", default=_env("X4MCP_GAME_BIND", "127.0.0.1"),
+                    help="bind address for the game link; 0.0.0.0 inside a container")
     ap.add_argument("--http-port", type=int, default=_env("X4MCP_HTTP_PORT", 8766))
     ap.add_argument("--host", default=_env("X4MCP_HTTP_HOST", "127.0.0.1"),
                     help="bind address for MCP; 0.0.0.0 inside a container")
+    ap.add_argument("--allowed-hosts", default=_env("X4MCP_ALLOWED_HOSTS", ""),
+                    help="comma-separated host names MCP accepts besides "
+                         "localhost, 127.0.0.1 and [::1]")
     ap.add_argument("--game-dir", default=_env("X4_DIR", None),
                     help="X4 install folder (default: autodetect)")
     ap.add_argument("--language", default=_env("X4MCP_LANGUAGE", "en"),
@@ -367,11 +393,13 @@ def main():
         print(f"x4mcp: {e}", file=sys.stderr)
         artifacts = {"error": str(e)}
 
-    server = build_server(args.game_port, artifacts, args.cookbook_dir)
+    server = build_server(args.game_port, artifacts, args.cookbook_dir,
+                          game_host=args.game_host)
     if args.transport == "http":
         print(f"x4mcp: MCP on http://{args.host}:{args.http_port}/mcp; "
               f"the game dials into port {args.game_port}", file=sys.stderr)
-        server.run(transport="streamable-http", host=args.host, port=args.http_port)
+        server.run(transport="streamable-http", host=args.host, port=args.http_port,
+                   transport_security=transport_security(args.allowed_hosts))
     else:
         server.run(transport="stdio")
 

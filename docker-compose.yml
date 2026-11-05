@@ -25,6 +25,7 @@ services:
     environment:
       X4_DIR: /game
       X4MCP_HTTP_HOST: 0.0.0.0
+      X4MCP_GAME_BIND: 0.0.0.0
       X4MCP_HTTP_PORT: 8766
       X4MCP_GAME_PORT: 8765
       X4MCP_COOKBOOK_DIR: /app/cookbook

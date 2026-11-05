@@ -263,6 +263,8 @@ list with examples per platform.
 | `X4MCP_HTTP_PORT` | `8766` | Port your agent connects to |
 | `X4MCP_LANGUAGE` | `en` | Reported by `x4_status`; no other effect since ship names are read from the running game |
 | `X4MCP_HTTP_HOST` | `127.0.0.1` | MCP bind address |
+| `X4MCP_ALLOWED_HOSTS` | empty | Host names MCP accepts besides `localhost`, `127.0.0.1` and `[::1]` |
+| `X4MCP_GAME_BIND` | `127.0.0.1` | Bind address for the game link; `0.0.0.0` inside Docker |
 | `X4MCP_TRANSPORT` | `http` | `http` or `stdio` |
 | `X4MCP_COOKBOOK_DIR` | `cookbook/` in this repository | Where saved Lua recipes are kept |
 
@@ -273,17 +275,34 @@ environment X4 itself runs in; without them it uses the defaults.
 
 A prebuilt `dist/x4mcp_64.dll` is included and works with every X4 install: it
 imports `lua51_64.dll` by name rather than binding to one copy. Rebuild it only
-if you change the C source.
+if you change the C source. X4 does not need to be installed to build it.
+
+The committed DLL is reproducible. `native/reproduce.sh` builds it with the
+toolchain pinned in [native/Dockerfile](native/Dockerfile) (a fixed Debian
+image and snapshot, MinGW-w64 GCC 14.2 with UCRT), and CI checks on every push
+that the file in `dist/` is byte for byte what the source builds to. The same
+run loads the DLL into stock Lua 5.1 under Wine and plays the game's side of
+the protocol against a stand-in server. Each release attaches the DLL built
+from the tag, its SHA-256 and a build provenance attestation:
+
+```bash
+gh attestation verify x4mcp_64.dll --repo arslanrakh/x4-mcp
+```
+
+To build with your own compiler instead (a working DLL, not necessarily the
+same bytes):
 
 ```bash
 ./native/build.sh          # macOS/Linux cross-compile, or an MSYS2 shell
+./native/reproduce.sh      # the pinned build, needs Docker
 ```
 ```powershell
 .\native\build.ps1         # Windows
 ```
 
-Needs MinGW-w64: `brew install mingw-w64`, `apt install gcc-mingw-w64-x86-64`,
-or `pacman -S mingw-w64-x86_64-gcc` under MSYS2.
+`build.sh` needs MinGW-w64: `brew install mingw-w64`, `apt install
+gcc-mingw-w64-ucrt64` (then `CC=x86_64-w64-mingw32ucrt-gcc`), or `pacman -S
+mingw-w64-x86_64-gcc` under MSYS2.
 
 ## Development
 
@@ -306,6 +325,13 @@ which is how most of this was developed.
 `verify.py` talks to the MCP server, so start the server and load a savegame
 first. The virtualenv comes from `run-server.sh`. Pass a different MCP URL as
 the only argument if yours is not the default.
+
+The tests need no game. They cover the two listeners' defences (see
+[Safety](#safety)):
+
+```bash
+.venv/bin/pip install pytest && .venv/bin/python -m pytest -q tests
+```
 
 ## Limitations
 
@@ -330,6 +356,17 @@ game can do. Two consequences worth stating plainly:
 - Ship names, station names and mission text come from the game and reach the
   agent's context. Treat them as untrusted input, the same as any web page.
 
+Both ports listen on loopback only, and neither trusts whoever connects:
+
+- MCP refuses requests whose `Host` or `Origin` is anything other than
+  `localhost`, `127.0.0.1` or `[::1]`, also when it binds `0.0.0.0` in Docker.
+  Without that, a web page could reach `x4_exec` through DNS rebinding. If your
+  agent reaches the server by another name, add it to `X4MCP_ALLOWED_HOSTS`.
+- The game port adopts a connection only after the extension's `hello`, within
+  five seconds. Anything else, a browser's `fetch()` included, is closed and
+  counted in `x4_status` as `rejected_connections`, and cannot displace the game
+  or answer in its place.
+
 ## Contributing
 
 [AGENTS.md](AGENTS.md) is the working guide — how the pieces fit, how to
@@ -347,3 +384,8 @@ Either way the next agent starts where you finished instead of rediscovering it.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Not affiliated with or endorsed by Egosoft. X4: Foundations is a trademark of
+Egosoft GmbH. This repository contains no game files: the DLL imports the
+game's `lua51_64.dll` by name, and the server reads the player's own
+installation at runtime.
