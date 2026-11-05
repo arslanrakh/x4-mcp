@@ -125,6 +125,12 @@ class GameBridge:
             self.replies.clear()
             self.cv.notify_all()
         if old is not None:
+            # shutdown, not just close: on Linux close() does not end a socket
+            # another thread is blocked in recv() on, and the old link lingers.
+            try:
+                old.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
             try:
                 old.close()
             except OSError:
