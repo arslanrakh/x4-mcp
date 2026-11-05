@@ -5,6 +5,10 @@ agent and a running game of X4: Foundations. It has two halves: a game
 extension that opens a socket from inside X4, and an MCP server that gives you
 tools to read and control that game.
 
+This file is the one set of agent instructions. `CLAUDE.md` holds a single
+line, `@AGENTS.md`, so Claude Code reads it too; put new guidance here, not
+there.
+
 You are probably here for one of two reasons, and they are related.
 
 ## 1. Someone asked you to do something in the game
@@ -95,7 +99,8 @@ chunk that loops inside the game costs exactly one round trip, the same as a
 purpose-built snapshot operation, and is not restricted to fields somebody
 chose in advance.
 
-So the game side has exactly one operation, `eval`. When something is hard,
+So the game side has exactly one operation that touches the game, `eval`
+(`ping` and `info` in the transport are link health checks). When something is hard,
 the fix is a **recipe in the cookbook**, or a better discovery path
 (`x4.source`, `x4.api`, `x4.order_params`) — never a new wrapper.
 
@@ -136,6 +141,11 @@ and recreate the Lua state; because the game reconnects, neither needs handling.
 | Cookbook | `server/cookbook.py` | Recipe files, injection into a chunk, error mapping, **and the `x4_cookbook` tool text** |
 | MCP server | `server/x4mcp_server.py` | Tools, prompt, persistent code session |
 | Recipes | `cookbook/*.lua` | Saved Lua, one per file. Committed on purpose |
+
+Around them: `scripts/` installs the extension and runs the server (`.sh` and
+`.ps1` for each), `native/build.sh` and `build.ps1` rebuild the DLL, `dist/`
+holds the prebuilt DLL (committed on purpose, see `.gitignore`), and
+`Dockerfile` with `docker-compose.yml` is the container route.
 
 ### The cookbook
 
@@ -190,9 +200,12 @@ mods installed regularly leaves an empty menu. Quit the game and add
 `<uisafemode>false</uisafemode>` to `config.xml` in the X4 user folder.
 
 Configuration is entirely through environment variables (`.env`): `X4_DIR`,
-`X4MCP_GAME_PORT`, `X4MCP_HTTP_PORT`, `X4MCP_LANGUAGE`, `X4MCP_HTTP_HOST`,
-`X4MCP_TRANSPORT`. The game side reads `X4MCP_HOST` and `X4MCP_GAME_PORT` from
-the environment X4 itself runs in.
+`X4MCP_GAME_PORT`, `X4MCP_HTTP_PORT`, `X4MCP_HTTP_HOST`, `X4MCP_TRANSPORT`,
+`X4MCP_COOKBOOK_DIR` and `X4MCP_LANGUAGE`. The last is now only recorded in
+`x4_status`: live calls replaced the ship catalogue whose language it selected.
+The game side reads `X4MCP_HOST` and `X4MCP_GAME_PORT` from the environment X4
+itself runs in. The install scripts read `X4_DIR` from the shell environment
+and ignore `.env`.
 
 ## Development loop
 
@@ -210,7 +223,8 @@ Restarting X4 costs about two and a half minutes. Avoid it.
 3. **Changed the server?** Just restart it. The game reconnects on its own
    within a couple of seconds.
 4. **Changed the C?** `./native/build.sh`, reinstall, and restart X4 — the DLL
-   is loaded into the process and cannot be swapped live.
+   is loaded into the process and cannot be swapped live. The build needs
+   MinGW-w64 and the game folder, since it links against `lua51_64.dll` there.
 
 Check Lua syntax before asking for a reload; a wasted reload costs the player a
 minute:
@@ -229,6 +243,16 @@ run it after touching the cookbook:
 ```bash
 .venv/bin/python server/verify.py
 ```
+
+Without a game you can still check that the server starts. It runs with no X4
+found (it logs that and skips the API index) and answers MCP on the HTTP port:
+
+```bash
+python3 -m py_compile server/*.py
+./scripts/run-server.sh --http-port 18766 --game-port 18765   # Ctrl-C to stop
+```
+
+There are no unit tests; `verify.py` against a live game is the test.
 
 ## Hard-won knowledge
 
@@ -324,12 +348,12 @@ without being redeclared. `x4.api("pattern")` searches them. Note that
 
 **Displayed names are worthless for logic.** The game may run in any language,
 and players rename ships. A ship called "Delilah's Swan Song" is a Syn; in a
-Russian install a Hyperion is "Гиперион". Match on `macro`, `model`, `owner`,
-`size`, `ship_type`, `sector_macro`. Use displayed names only when talking to
-the player, because that is what is on their screen.
+Russian install a Hyperion is "Гиперион". Match on `macro`, `owner`, `class`
+and `purpose`, and locate things by `sectorid`. Use displayed names only when
+talking to the player, because that is what is on their screen.
 
-**Sector ids change between sessions.** Resolve sectors by `sector_macro`, then
-by id, and only then by name.
+**Sector ids change between sessions.** Resolve a sector by its macro (read
+`macro` off the `sectorid`, as above), then by id, and only then by name.
 
 ## Writing style
 

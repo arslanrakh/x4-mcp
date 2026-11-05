@@ -18,7 +18,8 @@ Hyperion NQI-361 commands Katana JBK-764, Hyperion ZVK-956,
 ```
 
 Works on Windows, and on macOS/Linux where X4 runs under CrossOver, Wine or
-Proton — the game half is a normal Windows DLL either way.
+Proton — the game half is a normal Windows DLL either way. The native Linux
+build of X4 cannot load it.
 
 ## Contents
 
@@ -34,6 +35,8 @@ Proton — the game half is a normal Windows DLL either way.
 - [Development](#development)
 - [Limitations](#limitations)
 - [Safety](#safety)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## How it works
 
@@ -59,7 +62,8 @@ redeclared — the same API its own interface uses to give orders.
 
 - X4: Foundations 9.0 or newer
 - **Protected UI Mode switched off** — see below
-- Either Docker, or Python 3.11+
+- Either Docker, or Python 3.11+ (the install scripts also call Python 3 to
+  find X4, unless `X4_DIR` is set)
 - A C toolchain only if you want to rebuild the DLL; a prebuilt one is included
 
 ## Protected UI Mode
@@ -98,9 +102,15 @@ inside the Wine prefix elsewhere. If the line is not there yet, the mode is on.
 ```
 
 Both locate X4 automatically — Steam libraries (including ones moved to another
-drive), GOG, Epic, CrossOver and Whisky bottles, Wine prefixes. Set `X4_DIR` if
-your install is somewhere unusual. You can also copy `extension/x4mcp` plus
-`dist/x4mcp_64.dll` into X4's `extensions` folder by hand.
+drive), GOG, Epic, CrossOver and Whisky bottles, Wine prefixes. If your install
+is somewhere unusual, set `X4_DIR` in the shell you run them from; they do not
+read `.env`.
+
+To install by hand, copy `extension/x4mcp` and `dist/x4mcp_64.dll` into X4's
+`extensions/x4mcp` folder, and put a second copy of the DLL next to `X4.exe`.
+The second copy is required. When the game is started from Steam, GOG or a
+shortcut its working directory is not the install folder, so only the copy
+beside the executable is found.
 
 ### 2. The server
 
@@ -251,10 +261,10 @@ list with examples per platform.
 | `X4_DIR` | autodetect | X4 folder containing `01.cat`; required for Docker |
 | `X4MCP_GAME_PORT` | `8765` | Port the game connects to |
 | `X4MCP_HTTP_PORT` | `8766` | Port your agent connects to |
-| `X4MCP_LANGUAGE` | `en` | Language for canonical ship names |
+| `X4MCP_LANGUAGE` | `en` | Reported by `x4_status`; no other effect since ship names are read from the running game |
 | `X4MCP_HTTP_HOST` | `127.0.0.1` | MCP bind address |
 | `X4MCP_TRANSPORT` | `http` | `http` or `stdio` |
-| `X4MCP_COOKBOOK_DIR` | `./cookbook` | Where saved Lua recipes are kept |
+| `X4MCP_COOKBOOK_DIR` | `cookbook/` in this repository | Where saved Lua recipes are kept |
 
 The game side reads `X4MCP_HOST` and `X4MCP_GAME_PORT` too, from the
 environment X4 itself runs in; without them it uses the defaults.
@@ -293,6 +303,10 @@ which is how most of this was developed.
 .venv/bin/python server/verify.py   # end-to-end check against a running game
 ```
 
+`verify.py` talks to the MCP server, so start the server and load a savegame
+first. The virtualenv comes from `run-server.sh`. Pass a different MCP URL as
+the only argument if yours is not the default.
+
 ## Limitations
 
 - **The tick stops while the game window is in the background.** X4 only runs
@@ -301,8 +315,9 @@ which is how most of this was developed.
   as `ticking: false`.
 - The exposed API has no galaxy-wide sector enumerator, so unowned sectors have
   to be reached another way.
-- A recipe compiles at save time, but nothing can prove it still *works* after
-  a game or mod update. That is what the replace-or-delete rule is for.
+- A recipe is compiled by the game when it is saved (if the game is connected),
+  but nothing can prove it still *works* after a game or mod update. That is
+  what the replace-or-delete rule is for.
 
 ## Safety
 

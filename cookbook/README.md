@@ -26,7 +26,8 @@ end
 
 The header is `key: value` lines, then a blank line, then free text. The code
 below it is a Lua **function expression** and nothing else; the file name minus
-`.lua` is the recipe's name and has to be a bare Lua identifier.
+`.lua` is the recipe's name: lowercase letters, digits and underscores,
+starting with a letter, at most 64 characters.
 
 `verified` is required, and it carries the weight. Agents are told to save
 generously — every operation that worked, queries included — so the collection
@@ -35,6 +36,11 @@ is not fine is a recipe nobody checked. Requiring one line of *how* turns "do
 not save what you did not verify" from advice into something that shows up in
 the file, in search results, and in review. "Compiled only, never run" is an
 acceptable answer; silence is not.
+
+On save the running game compiles the code and refuses it if it does not
+compile; with no game connected the recipe is saved uncompiled and the reply
+says so. Deleting a recipe takes a reason. A file edited by hand is not
+compiled until a chunk uses it.
 
 ## How a recipe reaches the game
 
